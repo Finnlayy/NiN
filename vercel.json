@@ -1,0 +1,16 @@
+{
+  "framework": "vite",
+  "buildCommand": "vite build",
+  "outputDirectory": "dist",
+  "functions": {
+    "api/handler.ts": {
+      "maxDuration": 300
+    }
+  },
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "/api/handler" },
+    { "source": "/learning", "destination": "/api/handler" },
+    { "source": "/learning/(.*)", "destination": "/api/handler" },
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
+}

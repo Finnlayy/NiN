@@ -1,19 +1,33 @@
 import { GoogleGenAI } from '@google/genai';
 import { NeuralCoreAdapter, WrappedPrompt, NeuralCoreResponse } from '../src/types';
 import { KrakenOrderExecutor } from './kraken';
+import { resolveBearerToken } from './connect';
 
 export class GeminiCoreAdapter implements NeuralCoreAdapter {
-  private ai: GoogleGenAI;
+  private ai: GoogleGenAI | null = null;
+  private apiKey: string | undefined;
   private kraken: KrakenOrderExecutor;
 
   constructor() {
-    this.ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
     this.kraken = new KrakenOrderExecutor();
+  }
+
+  private async client(): Promise<GoogleGenAI> {
+    const apiKey = await resolveBearerToken({
+      connectorUid: process.env.CONNECT_GEMINI,
+      fallback: process.env.GEMINI_API_KEY,
+    });
+    if (!this.ai || this.apiKey !== apiKey) {
+      this.apiKey = apiKey;
+      this.ai = new GoogleGenAI({ apiKey });
+    }
+    return this.ai;
   }
 
   async execute(prompt: WrappedPrompt): Promise<NeuralCoreResponse> {
     const start = Date.now();
     try {
+      const ai = await this.client();
       let finalMessage = prompt.userPrompt;
       
       try {
@@ -57,12 +71,12 @@ export class GeminiCoreAdapter implements NeuralCoreAdapter {
         interactionOpts.previous_interaction_id = prompt.previousInteractionId;
       }
 
-      let interaction: any = await this.ai.interactions.create(interactionOpts);
+      let interaction: any = await ai.interactions.create(interactionOpts);
 
       // Poll until not in_progress
       while (interaction.status === 'in_progress') {
         await new Promise(resolve => setTimeout(resolve, 2000));
-        interaction = await this.ai.interactions.get(interaction.id);
+        interaction = await ai.interactions.get(interaction.id);
       }
 
       if (interaction.status === 'failed' || interaction.status === 'cancelled') {
@@ -78,7 +92,7 @@ export class GeminiCoreAdapter implements NeuralCoreAdapter {
                 const args = call.args?.command_args;
                 const result = await this.kraken.executeCommand(args);
                 
-                interaction = await this.ai.interactions.create({
+                interaction = await ai.interactions.create({
                   agent: 'antigravity-preview-05-2026',
                   environment: 'remote',
                   background: true,
@@ -95,7 +109,7 @@ export class GeminiCoreAdapter implements NeuralCoreAdapter {
                 // Poll again
                 while (interaction.status === 'in_progress') {
                   await new Promise(resolve => setTimeout(resolve, 2000));
-                  interaction = await this.ai.interactions.get(interaction.id);
+                  interaction = await ai.interactions.get(interaction.id);
                 }
                 
                 if (interaction.status === 'failed' || interaction.status === 'cancelled') {
