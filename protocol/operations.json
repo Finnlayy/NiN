@@ -1,0 +1,197 @@
+{
+  "$comment": "NEU Operations-Register v1.1 -- normativ. 'phase' = Einfuehrungsphase, 'risk' = none|read|write|destructive|high, 'requires_elevation' = none|workspace|repo_write, 'path_params' = Parameter, die von core/policy.py gegen die Sandbox geprueft werden, 'implemented_by' = Limbs gemaess limbs/registry.json. Eine Operation gilt erst dann als verfuegbar, wenn ein Limb mit status='active' sie implementiert.",
+  "version": "1.1",
+  "updated_at": "2026-09-03",
+  "operations": {
+    "sys.ping": {
+      "phase": 1,
+      "risk": "none",
+      "requires_elevation": "none",
+      "path_params": [],
+      "implemented_by": [
+        "echo"
+      ],
+      "description": "Lebenszeichen + Faehigkeitsliste des Limbs. Dient dem Handshake beim Bootstrapping.",
+      "params": {}
+    },
+    "sys.echo": {
+      "phase": 1,
+      "risk": "none",
+      "requires_elevation": "none",
+      "path_params": [],
+      "implemented_by": [
+        "echo"
+      ],
+      "description": "Protokoll-Konformanztest: gibt params.message unveraendert zurueck. Beweist, dass Intent -> Limb -> Result funktioniert.",
+      "params": {
+        "message": "string (pflicht, 1..8192)"
+      }
+    },
+    "sys.noop": {
+      "phase": 1,
+      "risk": "none",
+      "requires_elevation": "none",
+      "path_params": [],
+      "implemented_by": [
+        "echo"
+      ],
+      "description": "Absichtlich leere Operation fuer Idempotenz-Tests.",
+      "params": {}
+    },
+    "sys.simulate": {
+      "phase": 1,
+      "risk": "none",
+      "requires_elevation": "none",
+      "path_params": [],
+      "implemented_by": [
+        "echo"
+      ],
+      "description": "Konformanz-Harness: erzwingt einen definierten Ausgang (success | fail | timeout | partial | crash), damit Timer-Ablauf, Statusbericht und der autodidaktische 2. Durchgang real getestet werden koennen.",
+      "params": {
+        "mode": "success | fail | timeout | partial | crash (pflicht)",
+        "message": "string (optional)",
+        "seconds": "number (optional, Default 30) -- nur fuer mode=timeout",
+        "code": "string (optional) -- Fehlercode fuer mode=fail",
+        "hint": "string (optional)"
+      }
+    },
+    "fs.read_file": {
+      "phase": 2,
+      "risk": "read",
+      "requires_elevation": "none",
+      "path_params": [
+        "path"
+      ],
+      "implemented_by": [
+        "bootstrap"
+      ],
+      "description": "Dateiinhalt (Text) + sha256 + Groesse zurueckgeben. Sandbox-Grenze wird erzwungen.",
+      "params": {
+        "path": "relativer Pfad (pflicht)",
+        "max_bytes": "int (optional, Default 1048576)"
+      }
+    },
+    "fs.write_file": {
+      "phase": 2,
+      "risk": "write",
+      "requires_elevation": "none",
+      "path_params": [
+        "path"
+      ],
+      "implemented_by": [
+        "bootstrap"
+      ],
+      "description": "Datei atomar anlegen/ueberschreiben/anhaengen. Ausserhalb der Sandbox nur mit elevation.level='repo_write'. Vor dem Ueberschreiben wird ein Backup unter runtime/backups/ abgelegt.",
+      "params": {
+        "path": "relativer Pfad (pflicht)",
+        "content": "string (pflicht)",
+        "mode": "create | overwrite | append (optional, Default create)",
+        "expect_sha256": "string (optional): Schreibvorgang nur ausfuehren, wenn die vorhandene Datei diesem Hash entspricht"
+      }
+    },
+    "fs.patch": {
+      "phase": 2,
+      "risk": "write",
+      "requires_elevation": "none",
+      "path_params": [
+        "path"
+      ],
+      "implemented_by": [
+        "bootstrap"
+      ],
+      "description": "Gezielte Suchen/Ersetzen-Mikroedits. Jeder Patch muss exakt matchen, sonst E_PATCH_NO_MATCH und keine Schreibaktion (all-or-nothing).",
+      "params": {
+        "path": "relativer Pfad (pflicht)",
+        "patches": "[{find: string, replace: string, count: int=1}] (pflicht)",
+        "expect_sha256": "string (optional)"
+      }
+    },
+    "fs.list": {
+      "phase": 2,
+      "risk": "read",
+      "requires_elevation": "none",
+      "path_params": [
+        "path"
+      ],
+      "implemented_by": [
+        "bootstrap"
+      ],
+      "description": "Verzeichnisinhalt mit Typ und Groesse auflisten.",
+      "params": {
+        "path": "relativer Pfad (optional, Default Sandbox-Root)",
+        "recursive": "bool (optional, Default false)",
+        "max_entries": "int (optional, Default 500)"
+      }
+    },
+    "fs.mkdir": {
+      "phase": 2,
+      "risk": "write",
+      "requires_elevation": "none",
+      "path_params": [
+        "path"
+      ],
+      "implemented_by": [
+        "bootstrap"
+      ],
+      "description": "Verzeichnis anlegen (idempotent).",
+      "params": {
+        "path": "relativer Pfad (pflicht)"
+      }
+    },
+    "fs.delete": {
+      "phase": 2,
+      "risk": "destructive",
+      "requires_elevation": "repo_write",
+      "path_params": [
+        "path"
+      ],
+      "implemented_by": [
+        "bootstrap"
+      ],
+      "description": "Datei loeschen. Nur mit Rechteanhebung und nur nach Backup. Innerhalb von .git/, runtime/ und .github/ immer verboten.",
+      "params": {
+        "path": "relativer Pfad (pflicht)"
+      }
+    },
+    "shell.exec": {
+      "phase": 4,
+      "risk": "high",
+      "requires_elevation": "repo_write",
+      "path_params": [],
+      "implemented_by": [],
+      "description": "Terminal-Kommando ausfuehren. Zusaetzlich durch neu.config.json (allow_shell_ops) und constraints.allow_shell=true doppelt gated. argv-Liste, kein Shell-String-Interpolat.",
+      "params": {
+        "argv": "[string] (pflicht)",
+        "cwd": "relativer Pfad (optional)",
+        "timeout_s": "number (optional)"
+      }
+    },
+    "test.run": {
+      "phase": 4,
+      "risk": "high",
+      "requires_elevation": "none",
+      "path_params": [],
+      "implemented_by": [],
+      "description": "Unit-Tests ausfuehren und strukturiert zurueckmelden (Bestanden/Fehlgeschlagen je Testfall). Gated durch allow_test_ops.",
+      "params": {
+        "runner": "unittest | pytest (pflicht)",
+        "targets": "[string] (pflicht)",
+        "timeout_s": "number (optional)"
+      }
+    },
+    "core.memory_write": {
+      "phase": 4,
+      "risk": "write",
+      "requires_elevation": "none",
+      "path_params": [
+        "path"
+      ],
+      "implemented_by": [],
+      "description": "Kontext-/Gedaechtniseintrag in core/memory (Markdown-Log oder Vektorindex) schreiben. Ab Phase 4; Implementierer noch offen.",
+      "params": {
+        "path": "relativer Pfad (pflicht)",
+        "entry": "objekt (pflicht)"
+      }
+    }
+  }
+}

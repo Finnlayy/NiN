@@ -1,0 +1,44 @@
+{
+  "protocol": "neu/result",
+  "version": "1.1",
+  "result_id": "res_20260903T125822Z_1718e1",
+  "intent_id": "int_20260903T125822Z_294956",
+  "trace_id": "job_20260903T125822Z_fb686f",
+  "job_id": "job_20260903T125822Z_fb686f",
+  "iteration": 1,
+  "status": "success",
+  "operation": "sys.echo",
+  "limb": {
+    "name": "echo",
+    "version": "1.0.0",
+    "pid": 1769
+  },
+  "started_at": "2026-09-03T12:58:22.670Z",
+  "finished_at": "2026-09-03T12:58:22.671Z",
+  "duration_ms": 0,
+  "output": {
+    "echo": "Hallo vom KI-Kern",
+    "length": 17,
+    "attempt": 1
+  },
+  "artifacts": [],
+  "status_report": null,
+  "timer": {
+    "armed_at": "2026-09-03T12:58:22.621Z",
+    "expires_at": "2026-09-03T12:59:22.621Z",
+    "reported_at": "2026-09-03T12:58:22.671Z",
+    "remaining_ms": 59949,
+    "overrun_ms": 0,
+    "self_reported": true
+  },
+  "diagnostics": {
+    "stdout": "",
+    "stderr": "",
+    "exit_code": null
+  },
+  "error": null,
+  "self_report": {
+    "confidence": 1.0,
+    "notes": ""
+  }
+}

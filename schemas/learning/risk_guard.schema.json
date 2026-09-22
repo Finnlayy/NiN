@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://neural-orchestrator.local/schemas/learning/risk_guard.schema.json",
+  "title": "RiskGuard",
+  "description": "Pre-execution guard produced from repeated error patterns and skill anti-patterns.",
+  "type": "object",
+  "required": ["risk", "hasKnownPattern", "matchedPatterns", "matchedAntiPatterns", "recommendation"],
+  "properties": {
+    "risk": { "type": "number", "minimum": 0, "maximum": 1 },
+    "hasKnownPattern": { "type": "boolean" },
+    "matchedPatterns": { "type": "array", "items": { "$ref": "./error_pattern.schema.json" } },
+    "matchedAntiPatterns": { "type": "array", "items": { "type": "string" } },
+    "recommendation": { "type": "string" }
+  },
+  "additionalProperties": false
+}

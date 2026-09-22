@@ -1,0 +1,43 @@
+{
+  "protocol": "neu/result",
+  "version": "1.1",
+  "result_id": "res_20260903T130121Z_35f248",
+  "intent_id": "int_20260903T130119Z_112e43",
+  "trace_id": "job_20260903T130118Z_69591b",
+  "job_id": "job_20260903T130118Z_69591b",
+  "iteration": 2,
+  "status": "success",
+  "operation": "sys.simulate",
+  "limb": {
+    "name": "echo",
+    "version": "1.0.0",
+    "pid": 1807
+  },
+  "started_at": "2026-09-03T13:01:19.591Z",
+  "finished_at": "2026-09-03T13:01:21.092Z",
+  "duration_ms": 1500,
+  "output": {
+    "simulated": "timeout",
+    "message": "Warten auf externe Ressource"
+  },
+  "artifacts": [],
+  "status_report": null,
+  "timer": {
+    "armed_at": "2026-09-03T13:01:19.540Z",
+    "expires_at": "2026-09-03T13:01:22.540Z",
+    "reported_at": "2026-09-03T13:01:21.092Z",
+    "remaining_ms": 1447,
+    "overrun_ms": 0,
+    "self_reported": true
+  },
+  "diagnostics": {
+    "stdout": "",
+    "stderr": "",
+    "exit_code": null
+  },
+  "error": null,
+  "self_report": {
+    "confidence": 1.0,
+    "notes": ""
+  }
+}

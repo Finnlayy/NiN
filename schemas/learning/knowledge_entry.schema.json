@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://neural-orchestrator.local/schemas/learning/knowledge_entry.schema.json",
+  "title": "KnowledgeEntry",
+  "description": "Versioned Knowledge Base item ingested by the learning algorithm.",
+  "type": "object",
+  "required": ["id", "namespace", "title", "contentType", "domain", "body", "tags", "tokenIds", "source", "evidence", "createdAt", "updatedAt"],
+  "properties": {
+    "id": { "type": "string" },
+    "namespace": { "type": "string" },
+    "title": { "type": "string" },
+    "contentType": {
+      "type": "string",
+      "enum": ["note", "solution", "algorithm", "research", "correction", "evaluation_report"]
+    },
+    "domain": { "type": "string", "enum": ["ml_30core", "dev_dp", "generic", "unknown", "misc"] },
+    "algorithmTag": { "type": "string" },
+    "body": { "type": "string" },
+    "tags": { "type": "array", "items": { "type": "string" } },
+    "tokenIds": { "type": "array", "items": { "type": "string" } },
+    "embedding": { "type": "array", "items": { "type": "number" } },
+    "source": {
+      "type": "object",
+      "required": ["kind"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["internal", "external"] },
+        "ref": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["key", "value"],
+        "properties": {
+          "key": { "type": "string" },
+          "value": { "type": "string" }
+        }
+      }
+    },
+    "qualityScore": { "type": "number", "minimum": 0, "maximum": 1 },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "updatedAt": { "type": "string", "format": "date-time" }
+  },
+  "additionalProperties": false
+}

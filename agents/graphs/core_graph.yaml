@@ -1,0 +1,46 @@
+graph:
+  name: neural_core_graph
+  version: "1.0.0"
+  entrypoint: ingress
+
+  nodes:
+    - id: ingress
+      type: middleware
+      description: Receives raw task requests and forwards them to the prompt wrapper.
+      next: [classifier]
+
+    - id: classifier
+      type: decision
+      description: Determines domain and complexity using deterministic signatures.
+      next:
+        complex: [urgency_wrapper]
+        simple: [core_executor]
+
+    - id: urgency_wrapper
+      type: prompt_enrichment
+      description: Injects high-urgency constraints for complex workflows.
+      next: [core_executor]
+
+    - id: core_executor
+      type: agent
+      description: Neural Core reasoning node.
+      next: [telemetry]
+
+    - id: telemetry
+      type: sink
+      description: Records latency, variant and accuracy for empirical analysis.
+      next: []
+
+  edges:
+    - from: ingress
+      to: classifier
+    - from: classifier
+      to: urgency_wrapper
+      condition: is_complex
+    - from: classifier
+      to: core_executor
+      condition: not is_complex
+    - from: urgency_wrapper
+      to: core_executor
+    - from: core_executor
+      to: telemetry

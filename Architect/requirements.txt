@@ -1,0 +1,15 @@
+fastapi
+PyQt6
+pyqtgraph
+numpy
+scipy
+vectorbt
+torch
+onnx
+qdrant-client
+pydantic
+pydantic-settings
+ccxt
+google-genai
+scikit-learn
+hdbscan

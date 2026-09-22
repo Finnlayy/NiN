@@ -1,0 +1,142 @@
+{
+  "protocol": "neu/intent",
+  "version": "1.1",
+  "intent_id": "int_20260903T130119Z_112e43",
+  "trace_id": "job_20260903T130118Z_69591b",
+  "parent_intent_id": "int_20260903T130118Z_ffcc23",
+  "idempotency_key": "job_20260903T130118Z_69591b:i2:int_20260903T130119Z_112e43",
+  "created_at": "2026-09-03T13:01:19.540Z",
+  "source": {
+    "role": "core",
+    "node_id": "orchestrator.planner"
+  },
+  "target": {
+    "limb": "echo",
+    "version": null
+  },
+  "job": {
+    "job_id": "job_20260903T130118Z_69591b",
+    "goal": "Simulation innerhalb des Zeitbudgets abschliessen",
+    "iteration": 2,
+    "max_iterations": 2,
+    "on_failure": "autodidactic"
+  },
+  "timer": {
+    "deadline_s": 3.0,
+    "soft_deadline_s": 2.25,
+    "grace_s": 1.0,
+    "on_expiry": "iterate",
+    "armed_at": "2026-09-03T13:01:19.540Z",
+    "soft_expires_at": "2026-09-03T13:01:21.790Z",
+    "expires_at": "2026-09-03T13:01:22.540Z"
+  },
+  "task": {
+    "operation": "sys.simulate",
+    "params": {
+      "mode": "timeout",
+      "seconds": 1.5,
+      "message": "Warten auf externe Ressource"
+    },
+    "title": "Korrektur D2: Timer-Test mit Korrektur",
+    "objective": "Ziel (unveraendert): Simulation innerhalb des Zeitbudgets abschliessen\nDurchgang 2 von 2. Der vorherige Versuch (int_20260903T130118Z_ffcc23) ist gescheitert: Timer abgelaufen nach 949 ms (Budget 2.0s, Soft-Report ja). Statusbericht des Limbs: Timer abgelaufen: Der Handler fuer 'sys.simulate' war nach 2.0s (soft 1.0s) nicht fertig. Erledigt bis zum Abbruch: 1 Schritt(e).\nMassnahme dieses Durchgangs: Umfang des Auftrags verkleinern und Timer auf das verbleibende Job-Budget anheben. Konkret: nur ein einziges, pruefbares Teilergebnis anstreben; lange Warte-/Batch-Arbeit in mehrere Durchgaenge teilen.\nVerboten: exakt dieselbe Aktion zu wiederholen (Fingerabdruck e035a443ef54cf93).\nLiefere in jedem Fall einen status_report mit done/remaining, auch bei Abbruch.",
+    "acceptance": [
+      "Der Durchgang endet vor der Soft-Deadline mit einem status_report (state, done, remaining).",
+      "Es wird hoechstens ein Teilschritt ausgefuehrt, dafuer vollstaendig."
+    ]
+  },
+  "constraints": {
+    "sandbox_root": "workspace",
+    "allow_shell": false,
+    "allow_network": false,
+    "max_output_bytes": 1048576,
+    "dry_run": false,
+    "backup": true
+  },
+  "elevation": {
+    "level": "none",
+    "reason": "",
+    "approved_by": "",
+    "requested_paths": []
+  },
+  "context": {
+    "summary": "FEHLSCHLAGS-BRIEFING fuer Durchgang 2 (Job job_20260903T130118Z_69591b)\nZiel: Simulation innerhalb des Zeitbudgets abschliessen\nVorheriger Auftrag: int_20260903T130118Z_ffcc23 op=sys.simulate limb=echo\nErgebnis: status=timeout code=E_TIMEOUT dauer=949ms\nUrsache: Timer abgelaufen nach 949 ms (Budget 2.0s, Soft-Report ja). Statusbericht des Limbs: Timer abgelaufen: Der Handler fuer 'sys.simulate' war nach 2.0s (soft 1.0s) nicht fertig. Erledigt bis zum Abbruch: 1 Schritt(e).\nMassnahme: Umfang des Auftrags verkleinern und Timer auf das verbleibende Job-Budget anheben. Konkret: nur ein einziges, pruefbares Teilergebnis anstreben; lange Warte-/Batch-Arbeit in mehrere Durchgaenge teilen.\nTimer: deadline=2.0s soft=1.0s self_reported=True overrun=0ms\nStatusbericht: state=timeout erklaerung=Timer abgelaufen: Der Handler fuer 'sys.simulate' war nach 2.0s (soft 1.0s) nicht fertig. Erledigt bis zum Abbruch: 1 Schritt(e).\nErledigt: Warten begonnen\nOffen: 3.0s warten; Ergebnis melden\nBlocker: [{\"code\": \"E_TIMEOUT\", \"message\": \"Zeitbudget von 2.0s ueberschritten.\", \"hint\": \"Umfang verkleinern oder deadline_s anheben.\"}]\nVorschlag des Limbs: Zweiter Durchgang mit verkleinertem Umfang (siehe Restliste).\nKern-Bewertung: Timer abgelaufen nach 949 ms. Statusbericht: Timer abgelaufen: Der Handler fuer 'sys.simulate' war nach 2.0s (soft 1.0s) nicht fertig. Erledigt bis zum Abbruch: 1 Schritt(e).; Offen laut Limb: 3.0s warten; Ergebnis melden",
+    "artifacts": [],
+    "extra": {
+      "autodidactic": true,
+      "corrects": "int_20260903T130118Z_ffcc23",
+      "diagnosis": {
+        "code": "E_TIMEOUT",
+        "cause": "Timer abgelaufen nach 949 ms (Budget 2.0s, Soft-Report ja). Statusbericht des Limbs: Timer abgelaufen: Der Handler fuer 'sys.simulate' war nach 2.0s (soft 1.0s) nicht fertig. Erledigt bis zum Abbruch: 1 Schritt(e).",
+        "measure": "Umfang des Auftrags verkleinern und Timer auf das verbleibende Job-Budget anheben. Konkret: nur ein einziges, pruefbares Teilergebnis anstreben; lange Warte-/Batch-Arbeit in mehrere Durchgaenge teilen.",
+        "escalate": false,
+        "escalation_reason": "",
+        "operation_override": null,
+        "limb_override": null,
+        "param_patch": {
+          "mode": "timeout",
+          "seconds": 1.5,
+          "message": "Warten auf externe Ressource"
+        },
+        "constraint_patch": {
+          "backup": true
+        },
+        "elevation_patch": null,
+        "timer_patch": {
+          "deadline_s": 3.0,
+          "soft_deadline_s": 2.25,
+          "grace_s": 1.0
+        },
+        "extra_acceptance": [
+          "Der Durchgang endet vor der Soft-Deadline mit einem status_report (state, done, remaining).",
+          "Es wird hoechstens ein Teilschritt ausgefuehrt, dafuer vollstaendig."
+        ],
+        "forbidden_repeats": [
+          "e035a443ef54cf93"
+        ]
+      },
+      "previous": {
+        "intent_id": "int_20260903T130118Z_ffcc23",
+        "operation": "sys.simulate",
+        "params": {
+          "mode": "timeout",
+          "seconds": 3,
+          "message": "Warten auf externe Ressource"
+        },
+        "status": "timeout",
+        "error": {
+          "code": "E_TIMEOUT",
+          "message": "Timer abgelaufen: Der Handler fuer 'sys.simulate' war nach 2.0s (soft 1.0s) nicht fertig. Erledigt bis zum Abbruch: 1 Schritt(e).",
+          "hint": "Zweiter Durchgang mit verkleinertem Umfang (siehe Restliste)."
+        },
+        "status_report": {
+          "state": "timeout",
+          "explanation": "Timer abgelaufen: Der Handler fuer 'sys.simulate' war nach 2.0s (soft 1.0s) nicht fertig. Erledigt bis zum Abbruch: 1 Schritt(e).",
+          "done": [
+            "Warten begonnen"
+          ],
+          "remaining": [
+            "3.0s warten",
+            "Ergebnis melden"
+          ],
+          "blockers": [
+            {
+              "code": "E_TIMEOUT",
+              "message": "Zeitbudget von 2.0s ueberschritten.",
+              "hint": "Umfang verkleinern oder deadline_s anheben."
+            }
+          ],
+          "suggested_next": "Zweiter Durchgang mit verkleinertem Umfang (siehe Restliste)."
+        },
+        "duration_ms": 949,
+        "verdict": "needs_correction",
+        "reasons": [
+          "Timer abgelaufen nach 949 ms. Statusbericht: Timer abgelaufen: Der Handler fuer 'sys.simulate' war nach 2.0s (soft 1.0s) nicht fertig. Erledigt bis zum Abbruch: 1 Schritt(e).",
+          "Offen laut Limb: 3.0s warten; Ergebnis melden"
+        ]
+      },
+      "forbidden_repeats": [
+        "e035a443ef54cf93"
+      ]
+    }
+  }
+}

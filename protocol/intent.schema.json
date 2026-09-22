@@ -1,0 +1,632 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Finnlayy/NIO/protocol/intent.schema.json",
+  "title": "NEU Intent (Core -> Orchestrator -> Limb)",
+  "description": "Auftrag fuer genau einen Durchgang eines Jobs. Massgeblich ist die Referenzimplementierung core/protocol.py; dieses Schema spiegelt Protokoll 1.2 fuer Editoren, CI und fremdsprachige Limbs. Unbekannte Schluessel sind verboten (Drift-Frueherkennung); frei erweiterbar sind nur task.params und context.extra.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocol",
+    "version",
+    "intent_id",
+    "created_at",
+    "source",
+    "target",
+    "job",
+    "task"
+  ],
+  "properties": {
+    "protocol": {
+      "const": "neu/intent"
+    },
+    "version": {
+      "pattern": "^1\\.[0-2]$",
+      "description": "Protokoll 1.2 (abwaertskompatibel: 1.1/1.0-Daten bleiben gueltig)"
+    },
+    "intent_id": {
+      "$ref": "#/$defs/id",
+      "pattern": "^int_[A-Za-z0-9_-]{6,64}$"
+    },
+    "trace_id": {
+      "$ref": "#/$defs/id",
+      "description": "Korrelations-ID; entspricht per Default der job_id"
+    },
+    "parent_intent_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^int_[A-Za-z0-9_-]{6,64}$",
+      "description": "Vorgaenger-Durchgang (Autodidaktik)"
+    },
+    "idempotency_key": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "created_at": {
+      "$ref": "#/$defs/timestamp"
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "role",
+        "node_id"
+      ],
+      "properties": {
+        "role": {
+          "enum": [
+            "core",
+            "orchestrator",
+            "limb",
+            "human"
+          ]
+        },
+        "node_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      }
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "limb"
+      ],
+      "properties": {
+        "limb": {
+          "pattern": "^[a-z][a-z0-9_]{0,31}$",
+          "description": "Name gemaess limbs/registry.json"
+        },
+        "version": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^\\d+\\.\\d+\\.\\d+(?:[-+][A-Za-z0-9.-]+)?$"
+        }
+      }
+    },
+    "job": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "job_id"
+      ],
+      "description": "Iterationen zaehlen pro Job, nicht pro Agentenaufruf.",
+      "properties": {
+        "job_id": {
+          "type": "string",
+          "pattern": "^job_[A-Za-z0-9_-]{6,64}$"
+        },
+        "goal": {
+          "type": "string",
+          "maxLength": 4096,
+          "description": "Ziel des Jobs; ueber alle Durchgaenge stabil"
+        },
+        "iteration": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2
+        },
+        "max_iterations": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2,
+          "description": "Hartes Maximum 2; Dev-Profil deckelt auf 1"
+        },
+        "on_failure": {
+          "enum": [
+            "autodidactic",
+            "return_to_core",
+            "abort"
+          ]
+        }
+      }
+    },
+    "timer": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Zeit-Vertrag des Durchgangs. Zwei Modi (Protokoll 1.2): 'deadline' begrenzt die Zeit, 'unlimited' **trackt** sie (t0 = Nullpunkt, elapsed_s = t_unlimited). safety_net_s ist in beiden Modi reine Prozess-Hygiene (Zombie-Schutz) und kein Aufgabenlimit; sein Eingriff meldet E_SAFETY_NET. Wird vom Orchestrator VOR Anbeginn geschaerft.",
+      "properties": {
+        "deadline_s": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "exclusiveMinimum": 0,
+          "maximum": 900,
+          "description": "null im Modus unlimited: es gilt kein Aufgabenlimit"
+        },
+        "soft_deadline_s": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "exclusiveMinimum": 0,
+          "maximum": 900,
+          "description": "Hier muss der Limb seinen Statusbericht liefern; null bei unlimited"
+        },
+        "grace_s": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 120
+        },
+        "on_expiry": {
+          "enum": [
+            "iterate",
+            "escalate",
+            "abort",
+            "none"
+          ],
+          "description": "none = keine Ablaufaktion (unlimited hat keinen Ablauf)"
+        },
+        "armed_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "soft_expires_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "expires_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "mode": {
+          "enum": [
+            "deadline",
+            "unlimited"
+          ],
+          "description": "deadline = Zeitbudget; unlimited = Zeit wird aufgezeichnet, nicht begrenzt"
+        },
+        "safety_net_s": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 86400,
+          "description": "Prozess-Hygiene: beendet einen haengenden Prozess. 0/null = wirklich unbegrenzt. Kein Aufgabenlimit."
+        },
+        "t0": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time",
+          "description": "Nullpunkt der Uhr (Job-Erstellung bzw. Schaerfung)"
+        },
+        "elapsed_s": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "t_unlimited: Sekunden seit t0. Pflichtnachweis im Result bei unlimited."
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "mode": {
+                "const": "unlimited"
+              }
+            },
+            "required": [
+              "mode"
+            ]
+          },
+          "then": {
+            "properties": {
+              "deadline_s": {
+                "type": "null"
+              },
+              "soft_deadline_s": {
+                "type": "null"
+              },
+              "on_expiry": {
+                "const": "none"
+              }
+            },
+            "description": "Unlimited darf kein Aufgabenlimit tragen (sonst waere es ein Deadline-Job)."
+          }
+        }
+      ]
+    },
+    "schedule": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Zeitgesteuerte Ausloeser gegen die Job-Uhr (Protokoll 1.2). Leer = keine Trigger. Der Orchestrator tickt (tick_s) und vergleicht elapsed mit when/every_s/at_s. check-Trigger erzeugen eigene Jobs (kind='scheduled') und verbrauchen kein Iterations-Budget des beobachteten Jobs.",
+      "required": [],
+      "properties": {
+        "triggers": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]{0,39}$"
+              },
+              "action": {
+                "enum": [
+                  "emit_event",
+                  "check",
+                  "escalate",
+                  "finish_job",
+                  "log"
+                ]
+              },
+              "when": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "maxLength": 120,
+                "pattern": "^elapsed\\s*(<=|>=|==|!=|<|>)\\s*(\\d+(?:\\.\\d+)?)$",
+                "description": "Bedingung 'elapsed <op> <sekunden>' (kantengesteuert); null = keine Bedingung"
+              },
+              "every_s": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "minimum": 0.05,
+                "maximum": 86400,
+                "description": "Intervall: 'pruefe alle N Sekunden'"
+              },
+              "at_s": {
+                "type": "array",
+                "maxItems": 64,
+                "items": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 86400000
+                },
+                "description": "Diskrete Zeitmarken in Sekunden seit t0"
+              },
+              "clock": {
+                "enum": [
+                  "job",
+                  "intent"
+                ],
+                "description": "job = Uhr seit Job-Erstellung (t_unlimited); intent = Uhr dieses Durchgangs"
+              },
+              "tolerance_s": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 60,
+                "description": "Nur fuer ==/!=: Ticks sind diskret, Gleichheit braucht ein Fenster"
+              },
+              "max_fires": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 10000,
+                "description": "0 = unbegrenzt (bis Auftrag endet)"
+              },
+              "once": {
+                "type": [
+                  "boolean",
+                  "null"
+                ],
+                "description": "Default: true bei reiner when-Kante, sonst false (Intervall/at_s-Liste arbeitet alles ab)"
+              },
+              "payload": {
+                "type": "object",
+                "description": "Aktionsparameter; bei action='check' Pflichtinhalt"
+              }
+            },
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "action": {
+                      "const": "check"
+                    }
+                  },
+                  "required": [
+                    "action"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "payload": {
+                      "type": "object",
+                      "anyOf": [
+                        {
+                          "required": [
+                            "operation"
+                          ]
+                        },
+                        {
+                          "required": [
+                            "checks"
+                          ]
+                        }
+                      ],
+                      "properties": {
+                        "operation": {
+                          "type": "string",
+                          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                        },
+                        "params": {
+                          "type": "object"
+                        },
+                        "checks": {
+                          "type": "array",
+                          "minItems": 1,
+                          "maxItems": 8,
+                          "items": {
+                            "type": "object",
+                            "required": [
+                              "operation"
+                            ],
+                            "additionalProperties": false,
+                            "properties": {
+                              "operation": {
+                                "type": "string",
+                                "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+                              },
+                              "params": {
+                                "type": "object"
+                              },
+                              "limb": {
+                                "type": "string",
+                                "maxLength": 64
+                              },
+                              "title": {
+                                "type": "string",
+                                "maxLength": 200
+                              }
+                            }
+                          }
+                        },
+                        "limb": {
+                          "type": "string",
+                          "maxLength": 64
+                        },
+                        "goal": {
+                          "type": "string",
+                          "maxLength": 4096
+                        },
+                        "title": {
+                          "type": "string",
+                          "maxLength": 200
+                        }
+                      }
+                    }
+                  },
+                  "required": [
+                    "payload"
+                  ]
+                }
+              },
+              {
+                "if": {
+                  "not": {
+                    "anyOf": [
+                      {
+                        "required": [
+                          "when"
+                        ]
+                      },
+                      {
+                        "required": [
+                          "every_s"
+                        ]
+                      },
+                      {
+                        "required": [
+                          "at_s"
+                        ]
+                      }
+                    ]
+                  }
+                },
+                "then": false,
+                "description": "Mindestens ein Ausloeser (when, every_s oder at_s) ist Pflicht."
+              }
+            ]
+          }
+        },
+        "tick_s": {
+          "type": "number",
+          "minimum": 0.05,
+          "maximum": 3600,
+          "description": "Auswertungsintervall des Schedulers"
+        }
+      }
+    },
+    "task": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "operation"
+      ],
+      "properties": {
+        "operation": {
+          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$",
+          "description": "Muss in protocol/operations.json registriert sein"
+        },
+        "params": {
+          "type": "object",
+          "description": "Frei erweiterbar; Schema je Operation im Register"
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "objective": {
+          "type": "string",
+          "maxLength": 8192,
+          "description": "Ziel in Klartext -- der Limb kennt keinen anderen Kontext"
+        },
+        "acceptance": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 2048
+          },
+          "maxItems": 64
+        },
+        "verification": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "enum": [
+                "none",
+                "file_exists",
+                "hash",
+                "unittest",
+                "pytest",
+                "shell"
+              ]
+            },
+            "command": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "expect": {
+              "type": "object"
+            }
+          }
+        }
+      }
+    },
+    "constraints": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sandbox_root": {
+          "type": "string",
+          "description": "Relativ zum Repo-Root; '.' erlaubt nur mit elevation.level=repo_write",
+          "default": "workspace"
+        },
+        "allow_shell": {
+          "type": "boolean",
+          "default": false
+        },
+        "allow_network": {
+          "type": "boolean",
+          "default": false
+        },
+        "max_output_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 67108864
+        },
+        "dry_run": {
+          "type": "boolean",
+          "default": false
+        },
+        "backup": {
+          "type": "boolean",
+          "default": true
+        }
+      }
+    },
+    "elevation": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Rechteanhebung fuer Selbstmodifikation (Ouroboros). Ab level != none sind reason (>= 20 Zeichen) und approved_by Pflicht.",
+      "properties": {
+        "level": {
+          "enum": [
+            "none",
+            "workspace",
+            "repo_write"
+          ],
+          "default": "none"
+        },
+        "reason": {
+          "type": "string",
+          "maxLength": 2048
+        },
+        "approved_by": {
+          "enum": [
+            "",
+            "core",
+            "human"
+          ],
+          "description": "'human' ist fuer human_only_globs zwingend (Constitution Guard)"
+        },
+        "requested_paths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Deklaration aller Zielpfade; nicht deklarierte Pfade werden abgelehnt"
+        }
+      }
+    },
+    "context": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "summary": {
+          "type": "string",
+          "maxLength": 16384
+        },
+        "artifacts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "path"
+            ],
+            "properties": {
+              "path": {
+                "type": "string"
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "role": {
+                "type": "string",
+                "maxLength": 32
+              }
+            }
+          }
+        },
+        "extra": {
+          "type": "object",
+          "description": "Frei erweiterbar (z. B. diagnosis, forbidden_repeats)"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^(int|res|trc|job)_[A-Za-z0-9_-]{6,64}$"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "Z$",
+      "description": "ISO-8601 in UTC mit Millisekunden"
+    }
+  }
+}

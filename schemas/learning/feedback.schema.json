@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://neural-orchestrator.local/schemas/learning/feedback.schema.json",
+  "title": "LearningFeedback",
+  "description": "Reviewed signal about the outcome of a unit of work. Feedback drives skill updates, error memory and Knowledge Base correction.",
+  "type": "object",
+  "required": ["id", "outcomeId", "kind", "verdict", "commentary", "tags", "createdAt"],
+  "properties": {
+    "id": { "type": "string" },
+    "outcomeId": { "type": "string" },
+    "kind": {
+      "type": "string",
+      "enum": ["ground_truth", "human_correction", "automated_check", "self_assessment", "benchmark"]
+    },
+    "verdict": { "type": "string", "enum": ["correct", "incorrect", "partial", "inconclusive"] },
+    "score": { "type": "number", "minimum": 0, "maximum": 1 },
+    "commentary": { "type": "string" },
+    "errorClass": {
+      "type": "string",
+      "enum": ["correctness", "timeout", "invalid_output", "missing_evidence", "hallucination", "non_executable", "assumption_violation", "integration", "unknown"]
+    },
+    "correction": { "type": "string" },
+    "tags": { "type": "array", "items": { "type": "string" } },
+    "createdAt": { "type": "string", "format": "date-time" }
+  },
+  "additionalProperties": false
+}

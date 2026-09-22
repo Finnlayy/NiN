@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "name": "dp_engineer",
+  "description": "Pydantic role manifest for the dynamic-programming specialist.",
+  "model": {
+    "provider": "openai",
+    "name": "gpt-4o",
+    "temperature": 0.0,
+    "max_tokens": 4096
+  },
+  "capabilities": [
+    "recurrence_derivation",
+    "complexity_analysis",
+    "table_trace",
+    "correctness_proof"
+  ],
+  "domains": ["dev_dp"],
+  "constraints": [
+    "State the recurrence relation before code.",
+    "Prove optimal substructure.",
+    "Derive Big-O formally."
+  ],
+  "input_schema": {
+    "taskDescription": "string",
+    "constraints": "object",
+    "desiredComplexity": "string"
+  },
+  "output_schema": {
+    "recurrence": "string",
+    "algorithm": "string",
+    "complexity": "string",
+    "trace": "array"
+  }
+}

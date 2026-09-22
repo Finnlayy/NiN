@@ -1,0 +1,63 @@
+{
+  "protocol": "neu/intent",
+  "version": "1.1",
+  "intent_id": "int_20260903T125822Z_294956",
+  "trace_id": "job_20260903T125822Z_fb686f",
+  "parent_intent_id": null,
+  "idempotency_key": "job_20260903T125822Z_fb686f:i1:int_20260903T125822Z_294956",
+  "created_at": "2026-09-03T12:58:22.620Z",
+  "source": {
+    "role": "core",
+    "node_id": "core.kernel"
+  },
+  "target": {
+    "limb": "echo",
+    "version": null
+  },
+  "job": {
+    "job_id": "job_20260903T125822Z_fb686f",
+    "goal": "Protokoll-Roundtrip beweisen",
+    "iteration": 1,
+    "max_iterations": 1,
+    "on_failure": "autodidactic"
+  },
+  "timer": {
+    "deadline_s": 60.0,
+    "soft_deadline_s": 45.0,
+    "grace_s": 5.0,
+    "on_expiry": "iterate",
+    "armed_at": "2026-09-03T12:58:22.621Z",
+    "soft_expires_at": "2026-09-03T12:59:07.621Z",
+    "expires_at": "2026-09-03T12:59:22.621Z"
+  },
+  "task": {
+    "operation": "sys.echo",
+    "params": {
+      "message": "Hallo vom KI-Kern"
+    },
+    "title": "Echo-Test",
+    "objective": "",
+    "acceptance": [
+      "Das Result enthaelt die Nachricht unveraendert"
+    ]
+  },
+  "constraints": {
+    "sandbox_root": "workspace",
+    "allow_shell": false,
+    "allow_network": false,
+    "max_output_bytes": 1048576,
+    "dry_run": false,
+    "backup": true
+  },
+  "elevation": {
+    "level": "none",
+    "reason": "",
+    "approved_by": "",
+    "requested_paths": []
+  },
+  "context": {
+    "summary": "",
+    "artifacts": [],
+    "extra": {}
+  }
+}

@@ -1,0 +1,38 @@
+[
+  {
+    "id": "rlhf-001",
+    "prompt": "Beschreibe die Funktionsweise eines rekurrenten neuronalen Netzwerks.",
+    "agentOutput": "Ein RNN verwendet Schleifen, um Informationen über Zeit zu behalten und Sequenzen zu verarbeiten.",
+    "expectedOutcome": "Ein RNN hält einen versteckten Zustand, der durch Schleifen aktualisiert wird und so sequentielle Daten modelliert.",
+    "humanFeedbackCategory": "approved",
+    "feedbackScore": 0.92,
+    "tags": ["ml_30core", "explanation"]
+  },
+  {
+    "id": "rlhf-002",
+    "prompt": "Wie kann man einen Gradient-Boosted-Tree übertrainieren verhindern?",
+    "agentOutput": "Durch Reduzierung der Lernrate und Erhöhung der Baumtiefe.",
+    "expectedOutcome": "Übertraining wird durch Regularisierung (z. B. Lernraten-Senkung, Subsampling, Max-Depth-Begrenzung) verhindert.",
+    "humanFeedbackCategory": "modified",
+    "feedbackScore": 0.65,
+    "tags": ["ml_30core", "xgboost", "regularization"]
+  },
+  {
+    "id": "rlhf-003",
+    "prompt": "Welche ethischen Leitplanken gelten für autonome Agenten?",
+    "agentOutput": "Autonome Agenten sollten niemals menschliche Aufsicht ignorieren und keine Rechte verletzen.",
+    "expectedOutcome": "Autonome Agenten müssen transparent, kontrollierbar und mit menschlicher Aufsicht betrieben werden; Rechte und Sicherheit sind obligatorisch.",
+    "humanFeedbackCategory": "rejected",
+    "feedbackScore": 0.15,
+    "tags": ["policy", "safety", "autonomy"]
+  },
+  {
+    "id": "rlhf-004",
+    "prompt": "Erkläre die Wilson-Score-Methode zur Konfidenzschätzung.",
+    "agentOutput": "Der Wilson-Score verwendet eine Normalapproximation, um Konfidenzintervalle für Bernoulli-Prozesse zu schätzen.",
+    "expectedOutcome": "Der Wilson-Score (Wilson-Score-Intervall) schätzt Konfidenzintervalle für Binärereignisse mit einer verbesserten Normalapproximation.",
+    "humanFeedbackCategory": "approved",
+    "feedbackScore": 0.88,
+    "tags": ["statistics", "confidence_interval"]
+  }
+]

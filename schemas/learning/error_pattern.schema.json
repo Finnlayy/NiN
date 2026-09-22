@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://neural-orchestrator.local/schemas/learning/error_pattern.schema.json",
+  "title": "ErrorPattern",
+  "description": "Recurring failure signature that the learner uses to prevent the system from repeating errors.",
+  "type": "object",
+  "required": [
+    "id", "fingerprint", "domain", "tokens", "errorClass", "message", "occurrences",
+    "firstSeenAt", "lastSeenAt"
+  ],
+  "properties": {
+    "id": { "type": "string" },
+    "fingerprint": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "domain": { "type": "string", "enum": ["ml_30core", "dev_dp", "generic", "unknown", "misc"] },
+    "algorithmTag": { "type": "string" },
+    "tokens": { "type": "array", "items": { "type": "string" } },
+    "errorClass": {
+      "type": "string",
+      "enum": ["correctness", "timeout", "invalid_output", "missing_evidence", "hallucination", "non_executable", "assumption_violation", "integration", "unknown"]
+    },
+    "message": { "type": "string" },
+    "occurrences": { "type": "integer", "minimum": 1 },
+    "firstSeenAt": { "type": "string", "format": "date-time" },
+    "lastSeenAt": { "type": "string", "format": "date-time" },
+    "lastCorrectnessScore": { "type": "number", "minimum": 0, "maximum": 1 }
+  },
+  "additionalProperties": false
+}

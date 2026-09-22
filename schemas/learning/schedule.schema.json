@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://neural-orchestrator.local/schemas/learning/schedule.schema.json",
+  "title": "LearningSchedule",
+  "description": "A named cadence that turns outcomes, feedback, error patterns and Knowledge Base changes into learning work.",
+  "type": "object",
+  "required": [
+    "id", "name", "enabled", "owner", "cadence", "cadenceMs", "nextRunAt",
+    "steps", "createdAt", "updatedAt"
+  ],
+  "properties": {
+    "id": { "type": "string" },
+    "name": { "type": "string" },
+    "enabled": { "type": "boolean" },
+    "owner": { "type": "string" },
+    "cadence": { "type": "string" },
+    "cadenceMs": { "type": "number", "minimum": 1 },
+    "nextRunAt": { "type": "string", "format": "date-time" },
+    "lastRunAt": { "type": "string", "format": "date-time" },
+    "steps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "trigger", "taskType", "enabled"],
+        "properties": {
+          "id": { "type": "string" },
+          "trigger": {
+            "type": "string",
+            "enum": ["on_outcome", "on_feedback", "on_kb_change", "on_error", "time_based", "manual"]
+          },
+          "taskType": {
+            "type": "string",
+            "enum": ["remediation", "practice", "research", "kb_upgrade", "evaluation", "calibration", "schema_revision"]
+          },
+          "cadenceMs": { "type": "number", "minimum": 1 },
+          "minPriority": { "type": "number", "minimum": 0, "maximum": 1 },
+          "subjects": { "type": "array", "items": { "type": "string" } },
+          "enabled": { "type": "boolean" }
+        }
+      }
+    },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "updatedAt": { "type": "string", "format": "date-time" }
+  },
+  "additionalProperties": false
+}

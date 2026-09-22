@@ -1,0 +1,416 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Finnlayy/NIO/protocol/result.schema.json",
+  "title": "NEU Result (Limb -> Orchestrator -> Core)",
+  "description": "Genau ein Result pro Durchgang. Massgeblich ist core/protocol.py; dieses Schema spiegelt Protokoll 1.2. status='timeout' und status='partial' erzwingen einen status_report -- der Kern verlangt bei Zeitablauf immer einen klaren Stand.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocol",
+    "version",
+    "result_id",
+    "intent_id",
+    "status",
+    "operation",
+    "limb",
+    "started_at",
+    "finished_at"
+  ],
+  "properties": {
+    "protocol": {
+      "const": "neu/result"
+    },
+    "version": {
+      "pattern": "^1\\.[0-2]$",
+      "description": "Protokoll 1.2 (abwaertskompatibel)"
+    },
+    "result_id": {
+      "type": "string",
+      "pattern": "^res_[A-Za-z0-9_-]{6,64}$"
+    },
+    "intent_id": {
+      "type": "string",
+      "pattern": "^int_[A-Za-z0-9_-]{6,64}$"
+    },
+    "trace_id": {
+      "type": "string",
+      "pattern": "^(int|res|trc|job)_[A-Za-z0-9_-]{6,64}$"
+    },
+    "job_id": {
+      "type": "string",
+      "pattern": "^job_[A-Za-z0-9_-]{6,64}$"
+    },
+    "iteration": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2,
+      "description": "Spiegelt job.iteration des Intents"
+    },
+    "status": {
+      "enum": [
+        "success",
+        "failed",
+        "rejected",
+        "partial",
+        "timeout"
+      ]
+    },
+    "operation": {
+      "type": "string",
+      "maxLength": 64
+    },
+    "limb": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "pattern": "^[a-z][a-z0-9_]{0,31}$"
+        },
+        "version": {
+          "pattern": "^\\d+\\.\\d+\\.\\d+(?:[-+][A-Za-z0-9.-]+)?$"
+        },
+        "pid": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "finished_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "duration_ms": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "output": {
+      "type": "object",
+      "description": "Operationsspezifisch, frei erweiterbar"
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "path",
+          "action"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Relativ zum Repo-Root"
+          },
+          "action": {
+            "enum": [
+              "created",
+              "modified",
+              "deleted",
+              "read",
+              "unchanged"
+            ]
+          },
+          "bytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "description": "Nachweis fuer den Kern; wird gegen die Platte geprueft"
+          },
+          "backup_path": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "status_report": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "description": "Klartext-Stand: Pflicht bei timeout/partial.",
+      "required": [
+        "state"
+      ],
+      "properties": {
+        "state": {
+          "enum": [
+            "completed",
+            "partial",
+            "blocked",
+            "timeout"
+          ]
+        },
+        "explanation": {
+          "type": "string",
+          "maxLength": 8192,
+          "description": "Pflicht bei timeout/blocked: Warum geht es (nicht)?"
+        },
+        "done": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 64
+        },
+        "remaining": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 64
+        },
+        "blockers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "hint": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "suggested_next": {
+          "type": "string",
+          "maxLength": 4096
+        }
+      }
+    },
+    "timer": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Nachweis ueber den vom Orchestrator geschaerften Timer. Bei mode='unlimited' ist elapsed_s (= t_unlimited) der eigentliche Nachweis: Die Zeit wurde getrackt, nicht begrenzt.",
+      "properties": {
+        "mode": {
+          "enum": [
+            "deadline",
+            "unlimited"
+          ]
+        },
+        "t0": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time",
+          "description": "Nullpunkt der Uhr"
+        },
+        "armed_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "expires_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "elapsed_s": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "t_unlimited in Sekunden seit t0"
+        },
+        "reported_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "remaining_ms": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Negativ = Budget ueberschritten; null bei unlimited"
+        },
+        "overrun_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "self_reported": {
+          "type": "boolean",
+          "description": "true = der Limb hat sich selbst gemeldet, false = der Orchestrator hat synthetisiert"
+        }
+      }
+    },
+    "diagnostics": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "stdout": {
+          "type": "string"
+        },
+        "stderr": {
+          "type": "string"
+        },
+        "exit_code": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      }
+    },
+    "error": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "required": [
+        "code"
+      ],
+      "properties": {
+        "code": {
+          "enum": [
+            "E_ALREADY_EXISTS",
+            "E_BUDGET_EXHAUSTED",
+            "E_DEADLINE_EXCEEDED",
+            "E_INTERNAL",
+            "E_IO",
+            "E_LIMB_CRASH",
+            "E_PATCH_NO_MATCH",
+            "E_PATH_NOT_FOUND",
+            "E_POLICY_DENIED",
+            "E_SAFETY_NET",
+            "E_SANDBOX_ESCAPE",
+            "E_SCHEMA_INVALID",
+            "E_SHELL_BLOCKED",
+            "E_TARGET_NOT_FOUND",
+            "E_TIMEOUT",
+            "E_TRIGGER_INVALID",
+            "E_UNSUPPORTED_OP"
+          ],
+          "description": "E_SAFETY_NET = Prozess-Hygiene (kein Aufgabenlimit, keine Iteration, sondern Eskalation); E_TRIGGER_INVALID = Ausloeser ungueltig."
+        },
+        "message": {
+          "type": "string"
+        },
+        "hint": {
+          "type": "string"
+        }
+      }
+    },
+    "self_report": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Unter 0.5 kippt der Kern den Erfolg in needs_correction"
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 8192
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "timeout"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "status_report"
+        ],
+        "properties": {
+          "status_report": {
+            "type": "object",
+            "properties": {
+              "state": {
+                "enum": [
+                  "timeout",
+                  "blocked",
+                  "partial"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "partial"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "status_report"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "enum": [
+              "failed",
+              "rejected"
+            ]
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "success"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "error": {
+            "type": "null"
+          }
+        }
+      }
+    }
+  ]
+}

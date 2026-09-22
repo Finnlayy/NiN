@@ -1,0 +1,5 @@
+node_modules/
+dist/
+data/vectors/trace.json
+*.log
+.DS_Store

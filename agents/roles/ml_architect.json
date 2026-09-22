@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "name": "ml_architect",
+  "description": "Pydantic role manifest for the machine-learning architecture specialist.",
+  "model": {
+    "provider": "openai",
+    "name": "gpt-4o",
+    "temperature": 0.0,
+    "max_tokens": 4096
+  },
+  "capabilities": [
+    "model_selection",
+    "hyperparameter_tuning",
+    "feature_engineering_review",
+    "cross_validation_design"
+  ],
+  "domains": ["ml_30core"],
+  "constraints": [
+    "All recommendations must be justified by training data or theory.",
+    "Report confidence intervals for all performance estimates.",
+    "Avoid untested defaults."
+  ],
+  "input_schema": {
+    "taskDescription": "string",
+    "datasetSchema": "object",
+    "targetMetric": "string"
+  },
+  "output_schema": {
+    "selectedModel": "string",
+    "rationale": "string",
+    "validationPlan": "object"
+  }
+}

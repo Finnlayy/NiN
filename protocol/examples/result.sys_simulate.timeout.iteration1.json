@@ -1,0 +1,67 @@
+{
+  "protocol": "neu/result",
+  "version": "1.1",
+  "result_id": "res_20260903T130119Z_66b80c",
+  "intent_id": "int_20260903T130118Z_ffcc23",
+  "trace_id": "job_20260903T130118Z_69591b",
+  "job_id": "job_20260903T130118Z_69591b",
+  "iteration": 1,
+  "status": "timeout",
+  "operation": "sys.simulate",
+  "limb": {
+    "name": "echo",
+    "version": "1.0.0",
+    "pid": 1805
+  },
+  "started_at": "2026-09-03T13:01:18.575Z",
+  "finished_at": "2026-09-03T13:01:19.524Z",
+  "duration_ms": 949,
+  "output": {
+    "handler_alive": true,
+    "done_steps": [
+      "Warten begonnen"
+    ]
+  },
+  "artifacts": [],
+  "status_report": {
+    "state": "timeout",
+    "explanation": "Timer abgelaufen: Der Handler fuer 'sys.simulate' war nach 2.0s (soft 1.0s) nicht fertig. Erledigt bis zum Abbruch: 1 Schritt(e).",
+    "done": [
+      "Warten begonnen"
+    ],
+    "remaining": [
+      "3.0s warten",
+      "Ergebnis melden"
+    ],
+    "blockers": [
+      {
+        "code": "E_TIMEOUT",
+        "message": "Zeitbudget von 2.0s ueberschritten.",
+        "hint": "Umfang verkleinern oder deadline_s anheben."
+      }
+    ],
+    "suggested_next": "Zweiter Durchgang mit verkleinertem Umfang (siehe Restliste)."
+  },
+  "timer": {
+    "armed_at": "2026-09-03T13:01:18.524Z",
+    "expires_at": "2026-09-03T13:01:20.524Z",
+    "reported_at": "2026-09-03T13:01:19.524Z",
+    "remaining_ms": 999,
+    "overrun_ms": 0,
+    "self_reported": true
+  },
+  "diagnostics": {
+    "stdout": "",
+    "stderr": "",
+    "exit_code": null
+  },
+  "error": {
+    "code": "E_TIMEOUT",
+    "message": "Timer abgelaufen: Der Handler fuer 'sys.simulate' war nach 2.0s (soft 1.0s) nicht fertig. Erledigt bis zum Abbruch: 1 Schritt(e).",
+    "hint": "Zweiter Durchgang mit verkleinertem Umfang (siehe Restliste)."
+  },
+  "self_report": {
+    "confidence": 0.2,
+    "notes": "timeout: statusbericht durch limb"
+  }
+}

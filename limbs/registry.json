@@ -1,0 +1,37 @@
+{
+  "$comment": "NEU Limb-Register v1.0. 'status': planned | active | deprecated. Nur 'active'-Limbs duerfen vom Orchestrator gestartet werden -- damit ein geplanter Limb nicht stillschweigend als vorhanden gilt.",
+  "version": "1.0",
+  "default_limb": "echo",
+  "runtimes": {
+    "python3": {
+      "argv": ["{python}", "{entrypoint}", "--intent", "{intent_file}", "--iteration", "{iteration}", "--repo-root", "{repo_root}", "--profile", "{mode}"],
+      "description": "Python-3-Limb, Stdlib-only. Result als eine JSON-Zeile auf stdout."
+    },
+    "node": {
+      "argv": ["node", "{entrypoint}", "--intent", "{intent_file}", "--iteration", "{iteration}", "--repo-root", "{repo_root}", "--profile", "{mode}"],
+      "description": "Reserviert fuer TypeScript/JavaScript-Limbs ab Phase 4."
+    }
+  },
+  "limbs": {
+    "echo": {
+      "entrypoint": "limbs/echo_limb.py",
+      "runtime": "python3",
+      "version": "1.0.0",
+      "phase": 1,
+      "status": "active",
+      "writes_files": false,
+      "operations": ["sys.ping", "sys.echo", "sys.noop", "sys.simulate"],
+      "description": "Protokoll-Testdouble und Konformanz-Harness. Beweist den Round-Trip Intent -> Limb -> Result ohne Nebenwirkungen und erzwingt auf Wunsch Fehlpfade (fail/timeout/partial/crash)."
+    },
+    "bootstrap": {
+      "entrypoint": "limbs/bootstrap_limb.py",
+      "runtime": "python3",
+      "version": "1.0.0",
+      "phase": 2,
+      "status": "active",
+      "writes_files": true,
+      "operations": ["fs.read_file", "fs.write_file", "fs.patch", "fs.list", "fs.mkdir"],
+      "description": "Erster echter Arm: schreibt/patcht Dateien in der Sandbox und (mit elevation.level=repo_write) am System selbst. Spezifikation: prompts/limbs/bootstrap_limb.md"
+    }
+  }
+}

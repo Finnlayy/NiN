@@ -1,0 +1,55 @@
+{
+  "job_id": "job_20260903T130118Z_69591b",
+  "goal": "Simulation innerhalb des Zeitbudgets abschliessen",
+  "status": "resolved",
+  "created_at": "2026-09-03T13:01:18.523Z",
+  "updated_at": "2026-09-03T13:01:21.107Z",
+  "iteration": 2,
+  "max_iterations": 2,
+  "mode": "scale",
+  "deadline_s": 2.0,
+  "limbs_used": [
+    "echo"
+  ],
+  "operations_used": [
+    "sys.simulate"
+  ],
+  "measures_taken": 1,
+  "failure_kind": "",
+  "outcome": {
+    "intent_id": "int_20260903T130119Z_112e43",
+    "iteration": 2,
+    "artifacts": [],
+    "duration_ms": 2449
+  },
+  "history": [
+    {
+      "iteration": 1,
+      "intent_id": "int_20260903T130118Z_ffcc23",
+      "operation": "sys.simulate",
+      "limb": "echo",
+      "status": "timeout",
+      "verdict": "needs_correction",
+      "error_code": "E_TIMEOUT",
+      "duration_ms": 949,
+      "timer_expired": true,
+      "self_reported": true,
+      "archive": "runtime/archive/2026-09-03/int_20260903T130118Z_ffcc23",
+      "measure": ""
+    },
+    {
+      "iteration": 2,
+      "intent_id": "int_20260903T130119Z_112e43",
+      "operation": "sys.simulate",
+      "limb": "echo",
+      "status": "success",
+      "verdict": "accept",
+      "error_code": "",
+      "duration_ms": 1500,
+      "timer_expired": false,
+      "self_reported": true,
+      "archive": "runtime/archive/2026-09-03/int_20260903T130119Z_112e43",
+      "measure": ""
+    }
+  ]
+}

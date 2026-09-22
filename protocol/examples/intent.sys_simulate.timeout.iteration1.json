@@ -1,0 +1,63 @@
+{
+  "protocol": "neu/intent",
+  "version": "1.1",
+  "intent_id": "int_20260903T130118Z_ffcc23",
+  "trace_id": "job_20260903T130118Z_69591b",
+  "parent_intent_id": null,
+  "idempotency_key": "job_20260903T130118Z_69591b:i1:int_20260903T130118Z_ffcc23",
+  "created_at": "2026-09-03T13:01:18.523Z",
+  "source": {
+    "role": "core",
+    "node_id": "core.kernel"
+  },
+  "target": {
+    "limb": "echo",
+    "version": null
+  },
+  "job": {
+    "job_id": "job_20260903T130118Z_69591b",
+    "goal": "Simulation innerhalb des Zeitbudgets abschliessen",
+    "iteration": 1,
+    "max_iterations": 2,
+    "on_failure": "autodidactic"
+  },
+  "timer": {
+    "deadline_s": 2.0,
+    "soft_deadline_s": 1.0,
+    "grace_s": 1.0,
+    "on_expiry": "iterate",
+    "armed_at": "2026-09-03T13:01:18.524Z",
+    "soft_expires_at": "2026-09-03T13:01:19.524Z",
+    "expires_at": "2026-09-03T13:01:20.524Z"
+  },
+  "task": {
+    "operation": "sys.simulate",
+    "params": {
+      "mode": "timeout",
+      "seconds": 3,
+      "message": "Warten auf externe Ressource"
+    },
+    "title": "Timer-Test mit Korrektur",
+    "objective": "",
+    "acceptance": []
+  },
+  "constraints": {
+    "sandbox_root": "workspace",
+    "allow_shell": false,
+    "allow_network": false,
+    "max_output_bytes": 1048576,
+    "dry_run": false,
+    "backup": true
+  },
+  "elevation": {
+    "level": "none",
+    "reason": "",
+    "approved_by": "",
+    "requested_paths": []
+  },
+  "context": {
+    "summary": "",
+    "artifacts": [],
+    "extra": {}
+  }
+}

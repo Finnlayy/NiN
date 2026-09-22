@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://neural-orchestrator.local/schemas/learning/outcome.schema.json",
+  "title": "LearningOutcome",
+  "description": "The result of one unit of executed work. This is the primary signal consumed by the continuous-learning algorithm.",
+  "type": "object",
+  "required": ["id", "taskLabel", "signature", "promptVariant", "politenessTier", "urgencyTier", "success", "appliedPolicies", "createdAt"],
+  "properties": {
+    "id": { "type": "string" },
+    "taskLabel": { "type": "string" },
+    "signature": {
+      "type": "object",
+      "required": ["taskDescriptionHash", "tokens", "domain", "algorithmTag"],
+      "properties": {
+        "taskDescriptionHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "tokens": { "type": "array", "items": { "type": "string" } },
+        "domain": { "type": "string", "enum": ["ml_30core", "dev_dp", "generic", "unknown"] },
+        "algorithmTag": { "type": ["string", "null"] }
+      }
+    },
+    "promptVariant": { "type": "string", "enum": ["baseline", "urgency_wrapped"] },
+    "politenessTier": { "type": "string", "enum": ["very_polite", "polite", "neutral", "rude", "very_rude"] },
+    "urgencyTier": { "type": "string", "enum": ["low", "normal", "high", "critical"] },
+    "success": { "type": "string", "enum": ["success", "partial", "failure", "unsupported"] },
+    "correctnessScore": { "type": "number", "minimum": 0, "maximum": 1 },
+    "observedAccuracy": { "type": "number", "minimum": 0, "maximum": 1 },
+    "expectedAccuracy": { "type": "number", "minimum": 0, "maximum": 1 },
+    "latencyMs": { "type": "number", "minimum": 0 },
+    "errorClass": {
+      "type": "string",
+      "enum": ["correctness", "timeout", "invalid_output", "missing_evidence", "hallucination", "non_executable", "assumption_violation", "integration", "unknown"]
+    },
+    "errorMessage": { "type": "string" },
+    "appliedPolicies": { "type": "array", "items": { "type": "string" } },
+    "createdAt": { "type": "string", "format": "date-time" }
+  },
+  "additionalProperties": false
+}
