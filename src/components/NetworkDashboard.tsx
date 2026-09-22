@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Activity, Brain, Server, Shield, Zap, Terminal, Atom, Bot as BotIcon } from "lucide-react";
+import { Activity, Brain, Server, Shield, Zap, Terminal, Atom, Bot as BotIcon, Compass, ShieldAlert } from "lucide-react";
 import KrakenTerminal from "./KrakenTerminal";
 import NeuralKonsole from "./NeuralKonsole";
 import AgentCanvas from "./AgentCanvas";
@@ -8,12 +8,14 @@ import SentimentSidebar from "./SentimentSidebar";
 import OmegaCockpit from "./OmegaCockpit";
 import OmegaDashboard from "./OmegaDashboard";
 import GravitationTelemetryGraph from "./GravitationTelemetryGraph";
+import GravityFieldVisualizer from "./GravityFieldVisualizer";
 import SymbolAmpel from "./SymbolAmpel";
 import GPMIncubationArena from "./GPMIncubationArena";
 import DualStateVault from "./DualStateVault";
 import SystemAxiomMonitor from "./SystemAxiomMonitor";
 import SystemStatus from "./SystemStatus";
 import BotFleetManager from "./BotFleetManager";
+import FailureModesMatrixView from "./FailureModesMatrixView";
 import { ContinuousLearningMonitor } from "./ContinuousLearningMonitor";
 import { ArchitectTerminalMonitor } from "./ArchitectTerminalMonitor";
 import { AgentLogInspector } from "./AgentLogInspector";
@@ -28,8 +30,8 @@ export default function NetworkDashboard() {
   const [analysisResult, setAnalysisResult] = useState<string | null>(null);
   const [orderState, setOrderState] = useState<'idle' | 'executing' | 'success'>('idle');
 
-  // View switch: Network Canvas, System Status (§14), Bot Fleet, OMEGA Blueprint, Continuous Learning, Architect Core, or Rust Kernel Logs
-  const [activeView, setActiveView] = useState<'NETWORK' | 'SYSTEM_STATUS' | 'BOT_FLEET' | 'OMEGA' | 'LEARNING' | 'ARCHITECT' | 'KERNEL_LOGS'>('NETWORK');
+  // View switch: Network Canvas, Gravitationsfeld (§2), System Status (§14), Risk Matrix (Living Doc), Bot Fleet, OMEGA Blueprint, Continuous Learning, Architect Core, or Rust Kernel Logs
+  const [activeView, setActiveView] = useState<'NETWORK' | 'GRAVITY' | 'SYSTEM_STATUS' | 'RISK_MATRIX' | 'BOT_FLEET' | 'OMEGA' | 'LEARNING' | 'ARCHITECT' | 'KERNEL_LOGS'>('NETWORK');
 
   // States for features
   const [showSentimentSidebar, setShowSentimentSidebar] = useState(false);
@@ -159,6 +161,18 @@ export default function NetworkDashboard() {
               </button>
               <button
                 onClick={() => {
+                  setActiveView('GRAVITY');
+                  addLog("Switched to §2 Gravitationsfeld Potential-Chart & Simulation.", "info", "GravityEngine");
+                }}
+                className={`px-4 py-1.5 rounded-full text-xs font-semibold transition-all flex items-center gap-1.5 ${
+                  activeView === 'GRAVITY' ? 'bg-cyan-600 text-white shadow-md' : 'text-cyan-400 hover:text-cyan-200'
+                }`}
+              >
+                <Compass className="w-3.5 h-3.5" />
+                Gravitationsfeld (§2)
+              </button>
+              <button
+                onClick={() => {
                   setActiveView('SYSTEM_STATUS');
                   addLog("Switched to §14 System Axioms Status & Health Metrics.", "info", "SystemStatus");
                 }}
@@ -168,6 +182,18 @@ export default function NetworkDashboard() {
               >
                 <Shield className="w-3.5 h-3.5" />
                 System Status (§14)
+              </button>
+              <button
+                onClick={() => {
+                  setActiveView('RISK_MATRIX');
+                  addLog("Switched to Ausfall- & Fehlermodi Living Document Matrix (12 Mitigations).", "warn", "RiskSentinel");
+                }}
+                className={`px-4 py-1.5 rounded-full text-xs font-semibold transition-all flex items-center gap-1.5 ${
+                  activeView === 'RISK_MATRIX' ? 'bg-rose-600 text-white shadow-md animate-pulse' : 'text-rose-400 hover:text-rose-200'
+                }`}
+              >
+                <ShieldAlert className="w-3.5 h-3.5" />
+                Fehlermodi-Matrix
               </button>
               <button
                 onClick={() => {
@@ -262,10 +288,23 @@ export default function NetworkDashboard() {
         </div>
       </header>
 
-      {activeView === 'SYSTEM_STATUS' ? (
+      {activeView === 'GRAVITY' ? (
+        <div className="mt-2 space-y-6">
+          <GravityFieldVisualizer
+            spotPrice={omegaTelemetry.viaNegativa.spotPrice}
+            viaNegativa={omegaTelemetry.viaNegativa}
+            gravityField={omegaTelemetry.gravityField}
+            onLogEvent={addLog}
+          />
+        </div>
+      ) : activeView === 'SYSTEM_STATUS' ? (
         <div className="mt-2 space-y-6">
           <SystemStatus onLogEvent={addLog} showControls={true} />
           <SystemAxiomMonitor onLogEvent={addLog} />
+        </div>
+      ) : activeView === 'RISK_MATRIX' ? (
+        <div className="mt-2 space-y-6">
+          <FailureModesMatrixView onLogEvent={addLog} />
         </div>
       ) : activeView === 'BOT_FLEET' ? (
         <div className="mt-2">
