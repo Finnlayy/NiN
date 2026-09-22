@@ -1,0 +1,11 @@
+{
+  "name": "The Judge & The Swarm / Neu Orchestrator",
+  "install": "bash .cursor/install.sh",
+  "terminals": [
+    {
+      "name": "web",
+      "command": "npm run dev"
+    }
+  ],
+  "ports": [3000]
+}

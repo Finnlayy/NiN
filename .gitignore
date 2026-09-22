@@ -3,3 +3,5 @@ dist/
 data/vectors/trace.json
 *.log
 .DS_Store
+.venv/
+runtime/
