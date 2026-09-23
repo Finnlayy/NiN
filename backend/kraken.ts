@@ -2,6 +2,7 @@ import { execFile } from 'child_process';
 import { promisify } from 'util';
 import fs from 'fs';
 import path from 'path';
+import zlib from 'zlib';
 
 const execFileAsync = promisify(execFile);
 
@@ -61,6 +62,29 @@ function candidatePaths(): string[] {
     }
   }
   return paths;
+}
+
+function extractKrakenBinary(gzipBuffer: Buffer, dest: string): boolean {
+  const tar = zlib.gunzipSync(gzipBuffer);
+  let offset = 0;
+  while (offset + 512 <= tar.length) {
+    const header = tar.subarray(offset, offset + 512);
+    if (header.every((byte) => byte === 0)) {
+      break;
+    }
+    const name = header.subarray(0, 100).toString('utf8').replace(/\0.*$/, '');
+    const size = parseInt(header.subarray(124, 136).toString('utf8').replace(/\0.*$/, '').trim() || '0', 8);
+    const typeflag = String.fromCharCode(header[156]);
+    offset += 512;
+    const data = tar.subarray(offset, offset + size);
+    offset += Math.ceil(size / 512) * 512;
+    if ((typeflag === '0' || typeflag === '\0') && name.endsWith('/kraken') && !name.includes('..')) {
+      fs.writeFileSync(dest, data);
+      fs.chmodSync(dest, 0o755);
+      return true;
+    }
+  }
+  return false;
 }
 
 function isExecutableFile(filePath: string): boolean {
@@ -158,7 +182,6 @@ export class KrakenOrderExecutor {
 
   private async downloadCli(): Promise<string | null> {
     const asset = releaseAssetName();
-    const tarPath = '/tmp/kraken-cli.tar.gz';
     const dest = '/tmp/kraken';
     const url = `https://github.com/krakenfx/kraken-cli/releases/download/${CLI_RELEASE}/${asset}`;
     try {
@@ -166,12 +189,8 @@ export class KrakenOrderExecutor {
       if (!response.ok) {
         return null;
       }
-      fs.writeFileSync(tarPath, Buffer.from(await response.arrayBuffer()));
-      await execFileAsync('tar', ['-xzf', tarPath, '-C', '/tmp'], { timeout: CLI_TIMEOUT_MS });
-      const extracted = path.join('/tmp', asset.replace(/\.tar\.gz$/, ''), 'kraken');
-      fs.copyFileSync(extracted, dest);
-      fs.chmodSync(dest, 0o755);
-      return isExecutableFile(dest) ? dest : null;
+      const wrote = extractKrakenBinary(Buffer.from(await response.arrayBuffer()), dest);
+      return wrote && isExecutableFile(dest) ? dest : null;
     } catch {
       return null;
     }

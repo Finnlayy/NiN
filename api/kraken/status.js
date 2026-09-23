@@ -1,6 +1,7 @@
 const { execFile } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const zlib = require('zlib');
 
 const RELEASE = 'v0.4.1';
 
@@ -48,6 +49,27 @@ function run(cli, args) {
   });
 }
 
+function extractKrakenBinary(gzipBuffer, dest) {
+  const tar = zlib.gunzipSync(gzipBuffer);
+  let offset = 0;
+  while (offset + 512 <= tar.length) {
+    const header = tar.subarray(offset, offset + 512);
+    if (header.every((byte) => byte === 0)) break;
+    const name = header.subarray(0, 100).toString('utf8').replace(/\0.*$/, '');
+    const size = parseInt(header.subarray(124, 136).toString('utf8').replace(/\0.*$/, '').trim() || '0', 8);
+    const typeflag = String.fromCharCode(header[156]);
+    offset += 512;
+    const data = tar.subarray(offset, offset + size);
+    offset += Math.ceil(size / 512) * 512;
+    if ((typeflag === '0' || typeflag === '\0') && name.endsWith('/kraken') && !name.includes('..')) {
+      fs.writeFileSync(dest, data);
+      fs.chmodSync(dest, 0o755);
+      return true;
+    }
+  }
+  return false;
+}
+
 async function ensureCli() {
   const found = findCli();
   if (found) return found;
@@ -57,15 +79,8 @@ async function ensureCli() {
   const url = `https://github.com/krakenfx/kraken-cli/releases/download/${RELEASE}/${asset}`;
   const response = await fetch(url);
   if (!response.ok) return null;
-  const tarPath = '/tmp/kraken-cli.tar.gz';
-  fs.writeFileSync(tarPath, Buffer.from(await response.arrayBuffer()));
-  await new Promise((resolve, reject) => {
-    execFile('tar', ['-xzf', tarPath, '-C', '/tmp'], { timeout: 20000 }, (error) => (error ? reject(error) : resolve()));
-  });
-  const extracted = path.join('/tmp', asset.replace(/\.tar\.gz$/, ''), 'kraken');
-  fs.copyFileSync(extracted, '/tmp/kraken');
-  fs.chmodSync('/tmp/kraken', 0o755);
-  return exists('/tmp/kraken') ? '/tmp/kraken' : null;
+  const wrote = extractKrakenBinary(Buffer.from(await response.arrayBuffer()), '/tmp/kraken');
+  return wrote && exists('/tmp/kraken') ? '/tmp/kraken' : null;
 }
 
 function priceOf(quote) {
