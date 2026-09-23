@@ -10,6 +10,7 @@ import {
 } from '../src/index';
 import { HttpRequest, HttpResponse } from '../src/types';
 import { KrakenOrderExecutor } from './kraken';
+import { handleKrakenApi } from './krakenHttp';
 import { multiProviderCore } from './multiProvider';
 import { createServer as createViteServer } from 'vite';
 import { 
@@ -394,68 +395,7 @@ async function startServer() {
         return;
       }
 
-      if (method === 'POST' && url === '/api/execute-kraken') {
-        try {
-          const body = await readJsonBody(req);
-          const result = await krakenExecutor.executeCommand(String(body.command));
-          sendJson(res, 200, result);
-        } catch (error) {
-          sendJson(res, 400, { error: String(error) });
-        }
-        return;
-      }
-
-      if (method === 'POST' && url === '/api/execute-order') {
-        try {
-          const body = await readJsonBody(req);
-          const result = await krakenExecutor.executeOrder({
-            pair: String(body.pair),
-            type: body.type === 'sell' ? 'sell' : 'buy',
-            ordertype: body.ordertype === 'market' ? 'market' : 'limit',
-            volume: Number(body.volume),
-            price: body.price ? Number(body.price) : undefined
-          });
-          sendJson(res, 200, result);
-        } catch (error) {
-          sendJson(res, 400, { error: String(error) });
-        }
-        return;
-      }
-
-      if (method === 'GET' && url === '/api/kraken/status') {
-        const status = krakenExecutor.getExecutionStatus();
-        sendJson(res, 200, status);
-        return;
-      }
-
-      if (method === 'POST' && url === '/api/kraken/dca') {
-        try {
-          const body = await readJsonBody(req);
-          const limb = body.limb === 5 ? 5 : 4;
-          const asset = body.asset === 'SOL' ? 'SOL' : 'BTC';
-          const amount = Number(body.amountUSD) || (asset === 'BTC' ? 150 : 75);
-          const result = await krakenExecutor.executeDca(limb, asset, amount);
-          
-          if (!result.success) {
-            sendJson(res, result.connected ? 400 : 503, {
-              success: false,
-              limb: `Limb ${limb} (${asset} Dca)`,
-              amountUSD: amount,
-              orderResult: result,
-              error: result.error
-            });
-            return;
-          }
-
-          sendJson(res, 200, {
-            success: true,
-            limb: `Limb ${limb} (${asset} Dca)`,
-            amountUSD: amount,
-            orderResult: result
-          });
-        } catch (error) {
-          sendJson(res, 400, { error: String(error) });
-        }
+      if (await handleKrakenApi(req, res, krakenExecutor)) {
         return;
       }
 
