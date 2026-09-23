@@ -1,7 +1,6 @@
 {
   "functions": {
     "api/handler.ts": {
-      "includeFiles": "bin/kraken",
       "maxDuration": 60
     }
   },
