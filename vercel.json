@@ -3,7 +3,7 @@
   "buildCommand": "vite build",
   "outputDirectory": "dist",
   "functions": {
-    "api/kraken/status.ts": {
+    "api/kraken/status.js": {
       "maxDuration": 60
     },
     "api/handler.ts": {
