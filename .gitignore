@@ -9,3 +9,6 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 data/learning/
+.env
+.env.local
+.vercel/
