@@ -6,9 +6,9 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "dev": "tsx watch backend/server.ts",
-    "build": "vite build && esbuild backend/server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
+    "build": "vite build && esbuild backend/server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist-server/server.cjs",
     "prestart": "npm run build",
-    "start": "NODE_ENV=production node dist/server.cjs",
+    "start": "NODE_ENV=production node dist-server/server.cjs",
     "lint": "tsc --noEmit",
     "typecheck": "tsc --noEmit"
   },
