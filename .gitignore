@@ -5,3 +5,7 @@ data/vectors/trace.json
 .DS_Store
 .venv/
 runtime/
+__pycache__/
+*.py[cod]
+*.egg-info/
+data/learning/
