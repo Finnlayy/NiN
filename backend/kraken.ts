@@ -34,6 +34,14 @@ type CliResult = {
 
 const CLI_TIMEOUT_MS = 20_000;
 
+const CLI_RELEASE = 'v0.4.1';
+
+function releaseAssetName(): string {
+  return process.arch === 'arm64'
+    ? 'kraken-cli-aarch64-unknown-linux-gnu.tar.gz'
+    : 'kraken-cli-x86_64-unknown-linux-gnu.tar.gz';
+}
+
 function candidatePaths(): string[] {
   const paths: string[] = [];
   if (process.env.KRAKEN_CLI_PATH) {
@@ -41,8 +49,8 @@ function candidatePaths(): string[] {
   }
   paths.push(
     path.join(process.cwd(), 'bin', 'kraken'),
-    path.resolve(__dirname, '..', 'bin', 'kraken'),
     '/var/task/bin/kraken',
+    '/tmp/kraken',
     '/usr/local/bin/kraken',
     '/root/.cargo/bin/kraken'
   );
@@ -122,9 +130,51 @@ export class KrakenOrderExecutor {
   private cliPath: string | null;
   private recentOrdersList: KrakenRecentOrder[] = [];
   private cliVersion: string | null = null;
+  private preparing: Promise<string | null> | null = null;
 
   constructor() {
     this.cliPath = this.resolveCliPath();
+  }
+
+  /**
+   * Use a binary already on disk. On a host that does not have one, download
+   * the official Linux release into /tmp and use that.
+   */
+  private async ensureCli(): Promise<string | null> {
+    const found = this.resolveCliPath();
+    if (found) {
+      this.cliPath = found;
+      return found;
+    }
+    if (!this.preparing) {
+      this.preparing = this.downloadCli().finally(() => {
+        this.preparing = null;
+      });
+    }
+    const downloaded = await this.preparing;
+    this.cliPath = downloaded;
+    return downloaded;
+  }
+
+  private async downloadCli(): Promise<string | null> {
+    const asset = releaseAssetName();
+    const tarPath = '/tmp/kraken-cli.tar.gz';
+    const dest = '/tmp/kraken';
+    const url = `https://github.com/krakenfx/kraken-cli/releases/download/${CLI_RELEASE}/${asset}`;
+    try {
+      const response = await fetch(url);
+      if (!response.ok) {
+        return null;
+      }
+      fs.writeFileSync(tarPath, Buffer.from(await response.arrayBuffer()));
+      await execFileAsync('tar', ['-xzf', tarPath, '-C', '/tmp'], { timeout: CLI_TIMEOUT_MS });
+      const extracted = path.join('/tmp', asset.replace(/\.tar\.gz$/, ''), 'kraken');
+      fs.copyFileSync(extracted, dest);
+      fs.chmodSync(dest, 0o755);
+      return isExecutableFile(dest) ? dest : null;
+    } catch {
+      return null;
+    }
   }
 
   /**
@@ -205,6 +255,7 @@ export class KrakenOrderExecutor {
    * Live status from the Kraken CLI. connected is true only after `kraken status` reports online.
    */
   async getExecutionStatus(): Promise<Record<string, unknown>> {
+    await this.ensureCli();
     if (!this.hasNativeCli() || !this.cliPath) {
       return this.disconnected(
         'Kraken CLI binary not found. Set KRAKEN_CLI_PATH or install the kraken binary on PATH. Looked for bin/kraken, /usr/local/bin/kraken, and /root/.cargo/bin/kraken.'
@@ -305,6 +356,7 @@ export class KrakenOrderExecutor {
     limbContext?: { limb: 4 | 5; name: string }
   ): Promise<Record<string, unknown>> {
     const limbName = limbContext ? limbContext.name : 'Unknown Limb';
+    await this.ensureCli();
     if (!this.hasNativeCli() || !this.cliPath) {
       return {
         success: false,
@@ -367,6 +419,7 @@ export class KrakenOrderExecutor {
 
   async executeCommand(args: string): Promise<Record<string, unknown>> {
     const trimmed = (args || '').trim().replace(/^kraken\s+/, '');
+    await this.ensureCli();
     if (!this.hasNativeCli() || !this.cliPath) {
       return {
         success: false,
@@ -410,6 +463,7 @@ export class KrakenOrderExecutor {
    */
   async executeDca(limb: 4 | 5, asset: 'BTC' | 'SOL', amountUSD: number): Promise<Record<string, unknown>> {
     const pair = asset === 'BTC' ? 'BTCUSD' : 'SOLUSD';
+    await this.ensureCli();
     if (!this.hasNativeCli()) {
       return {
         success: false,
