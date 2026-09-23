@@ -4,7 +4,7 @@
   "terminals": [
     {
       "name": "web",
-      "command": "npm run dev"
+      "command": "KRAKEN_CLI_PATH=/usr/local/cargo/bin/kraken npm run dev"
     }
   ],
   "ports": [3000]
