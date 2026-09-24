@@ -2,11 +2,9 @@ import { existsSync } from 'fs';
 import type { IncomingMessage, ServerResponse } from 'http';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
-import {
-  createNeuralCoreMiddleware,
-  InMemoryLearningStore,
-  InMemoryTelemetryStore,
-} from '../src/index';
+import { InMemoryLearningStore } from '../src/learning/store';
+import { createNeuralCoreMiddleware } from '../src/middleware';
+import { InMemoryTelemetryStore } from '../src/telemetry';
 import type { HttpRequest, HttpResponse, NextFunction } from '../src/types';
 import type { LMStudioConfig } from './lmStudio';
 import { multiProviderCore } from './multiProvider';
