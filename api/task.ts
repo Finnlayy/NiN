@@ -1,5 +1,4 @@
 import type { IncomingMessage, ServerResponse } from 'http';
-import { handleNeuralRequest } from '../backend/neuralRoutes';
 
 export const maxDuration = 60;
 
@@ -20,13 +19,16 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
   }
 
   try {
+    // Loaded inside the handler so a module-init failure is returned as JSON.
+    // A top-level import crash kills the Vercel isolate before this function runs.
+    const { handleNeuralRequest } = await import('../backend/neuralRoutes');
     const handled = await handleNeuralRequest(req, res);
     if (!handled && !res.headersSent) {
       sendJson(res, 404, { error: `Unknown API route: ${req.method ?? 'GET'} ${req.url ?? ''}` });
     }
   } catch (error) {
     if (!res.headersSent) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = error instanceof Error ? error.stack || error.message : String(error);
       sendJson(res, 500, { error: message });
     }
   }
