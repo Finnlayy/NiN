@@ -12,19 +12,22 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
 }
 
 export default async function handler(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  const current = req.url ?? '';
-  if (!current.includes('/api/task')) {
-    const query = current.includes('?') ? current.slice(current.indexOf('?')) : '';
-    req.url = `/api/task${query}`;
+  if (req.method !== 'POST') {
+    sendJson(res, 200, {
+      ok: true,
+      method: req.method ?? 'GET',
+      url: req.url ?? '',
+      geminiKey: Boolean(process.env.GEMINI_API_KEY),
+      oneProviderKey: Boolean(process.env.ONEPROVIDER_KEY),
+    });
+    return;
   }
 
   try {
-    // Loaded inside the handler so a module-init failure is returned as JSON.
-    // A top-level import crash kills the Vercel isolate before this function runs.
     const { handleNeuralRequest } = await import('../backend/neuralRoutes');
     const handled = await handleNeuralRequest(req, res);
     if (!handled && !res.headersSent) {
-      sendJson(res, 404, { error: `Unknown API route: ${req.method ?? 'GET'} ${req.url ?? ''}` });
+      sendJson(res, 404, { error: 'Neural route was not handled.' });
     }
   } catch (error) {
     if (!res.headersSent) {
