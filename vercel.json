@@ -1,11 +1,11 @@
 {
   "framework": "vite",
-  "buildCommand": "node scripts/capture-runtime-env.js && vite build",
+  "buildCommand": "vite build",
   "outputDirectory": "dist",
   "functions": {
     "api/task.js": {
       "maxDuration": 60,
-      "includeFiles": "{prompts/system/**,api/runtime-secrets.json}"
+      "includeFiles": "prompts/system/**"
     }
   }
 }

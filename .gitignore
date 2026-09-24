@@ -6,4 +6,3 @@ data/vectors/trace.json
 .env
 .env.local
 .vercel/
-api/runtime-secrets.json
