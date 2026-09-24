@@ -63,12 +63,22 @@ function userText(taskDescription) {
 }
 
 function readEnv(name) {
-  return process.env[name];
+  // Sensitive Vercel variables are omitted from the build environment. A direct
+  // process.env.NAME read can be compiled against that empty snapshot, so resolve
+  // the live process object when the request runs.
+  const proc = globalThis['process'];
+  const env = proc && proc['env'];
+  if (!env) return undefined;
+  return env[name];
 }
 
-function envPresent(name) {
-  const value = readEnv(name);
-  return typeof value === 'string' && value.length > 0;
+function envState(name) {
+  const proc = globalThis['process'];
+  const env = proc && proc['env'];
+  if (!env || !Object.prototype.hasOwnProperty.call(env, name)) return 'missing';
+  const value = env[name];
+  if (typeof value !== 'string' || value.length === 0) return 'empty';
+  return 'set';
 }
 
 function outputText(interaction) {
@@ -101,12 +111,12 @@ module.exports = async function handler(req, res) {
       probe: {
         vercelEnv: readEnv('VERCEL_ENV') || null,
         keys: {
-          GEMINI_API_KEY: envPresent('GEMINI_API_KEY'),
-          LM_STUDIO_BASE_URL: envPresent('LM_STUDIO_BASE_URL'),
-          LM_STUDIO_MODEL: envPresent('LM_STUDIO_MODEL'),
-          ONEPROVIDER_KEY: envPresent('ONEPROVIDER_KEY'),
-          ONEPROVIDER_BASE_URL: envPresent('ONEPROVIDER_BASE_URL'),
-          ONEPROVIDER_MODEL: envPresent('ONEPROVIDER_MODEL'),
+          GEMINI_API_KEY: envState('GEMINI_API_KEY'),
+          LM_STUDIO_BASE_URL: envState('LM_STUDIO_BASE_URL'),
+          LM_STUDIO_MODEL: envState('LM_STUDIO_MODEL'),
+          ONEPROVIDER_KEY: envState('ONEPROVIDER_KEY'),
+          ONEPROVIDER_BASE_URL: envState('ONEPROVIDER_BASE_URL'),
+          ONEPROVIDER_MODEL: envState('ONEPROVIDER_MODEL'),
         },
       },
     });
