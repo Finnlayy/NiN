@@ -76,6 +76,7 @@ export default function BotFleetManager({ onLogEvent, className = '' }: BotFleet
         'Bot Manager'
       );
       throw error;
+      throw error;
     }
   };
 

@@ -174,7 +174,7 @@ export function canonicalPairKey(raw: string): string {
   if (key.includes('/')) {
     const [base, quote] = key.split('/');
     const named = BASE_NAMES[base] ?? base;
-    const quoted = quote === 'ZUSD' ? 'USD' : quote;
+    const quoted = quote === 'ZUSD' || quote === 'USDT' ? 'USD' : quote;
     return `${named}/${quoted}`;
   }
   if (key.endsWith('ZUSD')) {

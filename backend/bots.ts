@@ -239,8 +239,11 @@ class BotRegistry {
     const leverage = data.leverage || 10;
     const investmentUsd = Number(data.investmentUsd) || 100;
     const investmentEur = Number((investmentUsd * 0.92).toFixed(2));
-    const entryPrice = Number(data.entryPrice) || (data.pair.includes('BTC') ? 64500 : data.pair.includes('SOL') ? 145 : data.pair.includes('HYPE') ? 42 : 2.5);
-    const currentPrice = Number(data.currentPrice) || entryPrice;
+    const entryPrice = Number(data.entryPrice);
+    if (!(entryPrice > 0)) {
+      throw new Error('Kraken-Quote fehlt. Der Bot startet nicht ohne Lastkurs.');
+    }
+    const currentPrice = Number(data.currentPrice) > 0 ? Number(data.currentPrice) : entryPrice;
     const dcaRangeMin = Number(data.dcaRangeMin) || Number((entryPrice * 0.9).toFixed(2));
     const dcaRangeMax = Number(data.dcaRangeMax) || Number((entryPrice * 1.1).toFixed(2));
     const dcaLevels = Number(data.dcaLevels) || 50;
