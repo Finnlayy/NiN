@@ -3,12 +3,9 @@
   "buildCommand": "vite build",
   "outputDirectory": "dist",
   "functions": {
-    "api/task.ts": {
+    "api/task.js": {
       "maxDuration": 60,
       "includeFiles": "prompts/system/**"
-    },
-    "api/ai/[...path].ts": {
-      "maxDuration": 30
     }
   }
 }
