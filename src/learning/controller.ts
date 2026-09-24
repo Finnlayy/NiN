@@ -90,7 +90,7 @@ export function createLearningController(
         const taskDescription = String(body.taskDescription ?? '');
         const domain = body.domain ? (body.domain as ComplexDomain) : undefined;
         const algorithmTag = body.algorithmTag ? String(body.algorithmTag) : undefined;
-        const findings = engine.research(
+        const findings = await engine.researchIndexed(
           {
             taskDescription,
             domain,
@@ -198,7 +198,7 @@ async function guidanceFor(
   const domain = (body.domain as ComplexDomain) ?? 'generic';
   const algorithmTag = typeof body.algorithmTag === 'string' ? body.algorithmTag : undefined;
   const risk = engine.guardTask({ taskDescription, domain, algorithmTag });
-  const research = engine.research({ taskDescription, domain, algorithmTag }, { limit: 5 });
+  const research = await engine.researchIndexed({ taskDescription, domain, algorithmTag }, { limit: 5 });
 
   let guidance = buildGuidance(risk, research);
   if (research.length > 0 && options.openAiCompatible) {

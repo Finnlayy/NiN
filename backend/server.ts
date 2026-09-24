@@ -7,6 +7,8 @@ import {
   ContinuousLearningEngine,
   FileLearningStoreProvider,
   createLearningController,
+  openQdrantKnowledgeIndex,
+  qdrantLimbState,
 } from '../src/index';
 import { HttpRequest, HttpResponse } from '../src/types';
 import { KrakenOrderExecutor } from './kraken';
@@ -76,9 +78,10 @@ async function startServer() {
   const telemetry = new InMemoryTelemetryStore();
 
   const LEARNING_PATH = join(ROOT, 'data', 'learning', 'store.json');
-  const learningProvider = new FileLearningStoreProvider(LEARNING_PATH);
+  const knowledgeIndex = await openQdrantKnowledgeIndex();
+  const learningProvider = new FileLearningStoreProvider(LEARNING_PATH, knowledgeIndex);
   const learningStore = await learningProvider.load();
-  const learningEngine = new ContinuousLearningEngine({ store: learningStore });
+  const learningEngine = new ContinuousLearningEngine({ store: learningStore, knowledgeIndex });
   if (learningStore.listSchedules().length === 0) {
     learningEngine.installDefaultSchedules();
     await learningProvider.persist(learningStore);
@@ -95,7 +98,7 @@ async function startServer() {
     defaultPolitenessTier: 'neutral',
     telemetry,
     coreAdapter: multiProviderCore,
-    learning: { store: learningStore },
+    learning: { store: learningStore, knowledgeIndex },
   });
   
   let vite: any;
@@ -155,7 +158,12 @@ async function startServer() {
           limbs: {
             microstructure: { state: "ONLINE", obi: 0.41, footprint_delta: "+14.2 BTC" },
             ac_gravity: { state: "RESONATING", frequency_hz: 60.0, apparent_power_kva: 12.4 },
-            qdrant_memory: { state: "SYNCED", mode: "local_memory_fallback", vectors_stored: 1420 },
+            qdrant_memory: {
+              state: qdrantLimbState(knowledgeIndex.status().mode),
+              mode: knowledgeIndex.status().mode,
+              collection: knowledgeIndex.status().collection,
+              vectors_stored: knowledgeIndex.status().vectorsStored,
+            },
             regime_model: { state: "LOADED", model_file: "Architect/models/weights/omega_regime_16d.onnx", dimensions: 16 }
           },
           timestamp: new Date().toISOString()

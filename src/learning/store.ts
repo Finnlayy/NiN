@@ -114,6 +114,12 @@ export class InMemoryLearningStore implements LearningStore {
     return [...this.knowledge.values()].map(clone);
   }
 
+  /** Replace the knowledge map. Used when Qdrant is the source of truth. */
+  replaceKnowledge(entries: readonly KnowledgeEntry[]): void {
+    this.knowledge.clear();
+    for (const entry of entries) this.upsertKnowledge(entry);
+  }
+
   upsertSkill(skill: Skill): void {
     this.skills.set(skill.id, clone(skill));
     this.skillIndex.set(`${skill.domain}:${skill.algorithmTag ?? 'general'}`, skill.id);

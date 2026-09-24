@@ -48,7 +48,7 @@ interface ArchitectStatusPayload {
   limbs: {
     microstructure: { state: string; obi: number; footprint_delta: string };
     ac_gravity: { state: string; frequency_hz: number; apparent_power_kva: number };
-    qdrant_memory: { state: string; mode: string; vectors_stored: number };
+    qdrant_memory: { state: string; mode: string; vectors_stored: number; collection?: string };
     regime_model: { state: string; model_file: string; dimensions: number };
   };
   timestamp: string;
@@ -263,10 +263,11 @@ export const ArchitectTerminalMonitor: React.FC<ArchitectTerminalMonitorProps> =
             <Database className="w-4 h-4 text-purple-400" />
           </div>
           <div className="text-lg font-bold text-white">
-            {data?.limbs.qdrant_memory.vectors_stored ?? 1420} Vectors
+            {data?.limbs.qdrant_memory.vectors_stored ?? 0} Vectors
           </div>
           <div className="text-[11px] text-purple-300">
-            Mode: {data?.limbs.qdrant_memory.mode ?? 'local_fallback'}
+            Mode: {data?.limbs.qdrant_memory.mode ?? 'file_fallback'}
+            {data?.limbs.qdrant_memory.collection ? ` · ${data.limbs.qdrant_memory.collection}` : ''}
           </div>
         </div>
 

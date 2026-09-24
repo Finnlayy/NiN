@@ -1,5 +1,6 @@
+import { KNOWLEDGE_VECTOR_SIZE, knowledgeVector } from './qdrantKnowledge';
 import { KnowledgeEntry, ResearchOptions, ResearchResult } from './schemas';
-import { normalizeTokens } from './tokenizer';
+import { cosineSimilarity, hashVector, normalizeTokens } from './tokenizer';
 import { LearningStore } from './store';
 
 /**
@@ -61,33 +62,9 @@ export function researchKnowledge(
     if (algorithmTag && entry.algorithmTag !== algorithmTag) continue;
     if (!includeCorrections && entry.contentType === 'correction') continue;
 
-    const entryTokens = entry.tokenIds.length > 0 ? entry.tokenIds : textTokens(entry);
-    const tokenScore = jaccard(searchTokens, entryTokens);
-    const matchedTags = entry.tags.filter((tag) => queryTokens.some((token) => token.includes(tag) || tag.includes(token)));
-    const tagScore = matchedTags.length > 0 ? Math.min(1, matchedTags.length / 2) : 0;
-    const qualityScore = entry.qualityScore ?? 0.5;
-    const embeddingScore = null;
-
-    const relevanceScore = round(
-      Math.min(1, (tokenScore * 0.7 + tagScore * 0.2 + qualityScore * 0.1),
-    ));
-
-    if (relevanceScore < minRelevance) continue;
-
-    const reasons: string[] = [];
-    if (tokenScore > 0) reasons.push(`token overlap ${tokenScore.toFixed(3)}`);
-    if (matchedTags.length > 0) reasons.push(`matched tags ${matchedTags.join(', ')}`);
-    if (entry.contentType === 'correction') reasons.push('contains a recorded correction');
-
-    results.push({
-      entry,
-      relevanceScore,
-      tokenScore,
-      embeddingScore,
-      tagScore,
-      matchedTags,
-      reasons,
-    });
+    const scored = scoreKnowledgeEntry(entry, queryTokens, searchTokens, null);
+    if (scored.relevanceScore < minRelevance) continue;
+    results.push(scored);
   }
 
   return results
@@ -120,6 +97,95 @@ export function composeResearchBrief(results: ResearchResult[], maxEntries: numb
   lines.push('---');
   lines.push('Use the retrieved knowledge to improve correctness, but validate against the actual task constraints.');
   return lines.join('\n');
+}
+
+/**
+ * Rank points returned by Qdrant. `score` is the collection cosine similarity.
+ */
+export function researchFromVectorHits(
+  hits: Array<{ entry: KnowledgeEntry; score: number }>,
+  queryTokens: string[],
+  options: ResearchOptions = {},
+): ResearchResult[] {
+  const {
+    limit = 5,
+    domain,
+    algorithmTag,
+    minRelevance = 0,
+    includeCorrections = true,
+  } = options;
+  const searchTokens = [
+    ...queryTokens,
+    ...(domain ? [`@@domain:${domain}`] : []),
+    ...(algorithmTag ? [`@@alg:${algorithmTag}`] : []),
+  ];
+
+  const results: ResearchResult[] = [];
+  for (const hit of hits) {
+    const entry = hit.entry;
+    if (domain && entry.domain !== domain) continue;
+    if (algorithmTag && entry.algorithmTag !== algorithmTag) continue;
+    if (!includeCorrections && entry.contentType === 'correction') continue;
+    const scored = scoreKnowledgeEntry(entry, queryTokens, searchTokens, hit.score);
+    if (scored.relevanceScore < minRelevance) continue;
+    results.push(scored);
+  }
+
+  return results
+    .sort((a, b) => b.relevanceScore - a.relevanceScore || b.tokenScore - a.tokenScore)
+    .slice(0, limit);
+}
+
+/** Keep the stronger score when the same entry is found locally and in Qdrant. */
+export function mergeResearchResults(groups: ResearchResult[][], limit: number): ResearchResult[] {
+  const byId = new Map<string, ResearchResult>();
+  for (const group of groups) {
+    for (const result of group) {
+      const existing = byId.get(result.entry.id);
+      if (!existing || result.relevanceScore > existing.relevanceScore) {
+        byId.set(result.entry.id, result);
+      }
+    }
+  }
+  return [...byId.values()]
+    .sort((a, b) => b.relevanceScore - a.relevanceScore || b.tokenScore - a.tokenScore)
+    .slice(0, limit);
+}
+
+function scoreKnowledgeEntry(
+  entry: KnowledgeEntry,
+  queryTokens: string[],
+  searchTokens: string[],
+  vectorScore: number | null,
+): ResearchResult {
+  const entryTokens = entry.tokenIds.length > 0 ? entry.tokenIds : textTokens(entry);
+  const tokenScore = jaccard(searchTokens, entryTokens);
+  const matchedTags = entry.tags.filter((tag) => queryTokens.some((token) => token.includes(tag) || tag.includes(token)));
+  const tagScore = matchedTags.length > 0 ? Math.min(1, matchedTags.length / 2) : 0;
+  const qualityScore = entry.qualityScore ?? 0.5;
+  const embeddingScore = vectorScore ?? cosineSimilarity(
+    hashVector(searchTokens, KNOWLEDGE_VECTOR_SIZE),
+    knowledgeVector(entry),
+  );
+  const relevanceScore = round(
+    Math.min(1, Math.max(0, embeddingScore * 0.45 + tokenScore * 0.35 + tagScore * 0.1 + qualityScore * 0.1)),
+  );
+
+  const reasons: string[] = [];
+  if (embeddingScore > 0) reasons.push(`vector cosine ${embeddingScore.toFixed(3)}`);
+  if (tokenScore > 0) reasons.push(`token overlap ${tokenScore.toFixed(3)}`);
+  if (matchedTags.length > 0) reasons.push(`matched tags ${matchedTags.join(', ')}`);
+  if (entry.contentType === 'correction') reasons.push('contains a recorded correction');
+
+  return {
+    entry,
+    relevanceScore,
+    tokenScore,
+    embeddingScore,
+    tagScore,
+    matchedTags,
+    reasons,
+  };
 }
 
 function round(value: number): number {

@@ -1,8 +1,9 @@
 import { randomUUID } from 'crypto';
 import { evaluateOutcome, evaluateRisk } from './evaluator';
-import { researchKnowledge } from './research';
+import { mergeResearchResults, researchFromVectorHits, researchKnowledge } from './research';
 import { dueSkills, skillKey, updateSkill, wilsonLowerBound } from './algorithm';
-import { errorFingerprint, knowledgeTokens, normalizeTokens, taskSignatureHash } from './tokenizer';
+import { KnowledgeVectorIndex, KNOWLEDGE_VECTOR_SIZE } from './qdrantKnowledge';
+import { errorFingerprint, hashVector, knowledgeTokens, normalizeTokens, taskSignatureHash } from './tokenizer';
 import {
   ErrorPattern,
   Feedback,
@@ -25,6 +26,8 @@ export interface LearningEngineConfig {
   store: LearningStore;
   /** Inject a clock for deterministic tests. */
   now?: () => Date;
+  /** Qdrant index for knowledge entries. Absent or disconnected searches stay local. */
+  knowledgeIndex?: KnowledgeVectorIndex;
 }
 
 /** Result of processing one feedback event. */
@@ -58,9 +61,11 @@ export interface ScheduleRunResult {
  */
 export class ContinuousLearningEngine {
   readonly store: LearningStore;
+  private readonly knowledgeIndex: KnowledgeVectorIndex | undefined;
 
   constructor(config: LearningEngineConfig) {
     this.store = config.store;
+    this.knowledgeIndex = config.knowledgeIndex;
     this.now = config.now ?? (() => new Date());
   }
 
@@ -142,6 +147,54 @@ export class ContinuousLearningEngine {
       algorithmTag: params.algorithmTag ?? undefined,
       ...options,
     });
+  }
+
+  /**
+   * Same ranking as `research`, plus a live nearest-neighbour query against
+   * Qdrant when the knowledge index is connected.
+   */
+  async researchIndexed(
+    params: {
+      taskDescription: string;
+      domain?: LearningDomain;
+      algorithmTag?: string | null;
+      tokens?: string[];
+    },
+    options: ResearchOptions = {},
+  ): Promise<ResearchResult[]> {
+    const limit = options.limit ?? 5;
+    const local = this.research(params, options);
+    const index = this.knowledgeIndex;
+    if (!index || index.status().mode !== 'qdrant') return local;
+
+    const tokens = params.tokens ?? normalizeTokens(params.taskDescription);
+    const domain = params.domain as ResearchOptions['domain'];
+    const algorithmTag = params.algorithmTag ?? undefined;
+    const searchTokens = [
+      ...tokens,
+      ...(domain ? [`@@domain:${domain}`] : []),
+      ...(algorithmTag ? [`@@alg:${algorithmTag}`] : []),
+    ];
+
+    try {
+      const hits = await index.search({
+        vector: hashVector(searchTokens, KNOWLEDGE_VECTOR_SIZE),
+        limit: Math.max(limit * 4, 20),
+        domain,
+        algorithmTag,
+        includeCorrections: options.includeCorrections !== false,
+      });
+      const remote = researchFromVectorHits(hits, tokens, {
+        ...options,
+        domain,
+        algorithmTag,
+        limit,
+      });
+      return mergeResearchResults([local, remote], limit);
+    } catch (error) {
+      console.error('Qdrant knowledge search failed, using the local snapshot:', error);
+      return local;
+    }
   }
 
   /**

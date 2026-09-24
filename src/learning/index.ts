@@ -7,4 +7,5 @@ export * from './engine';
 export * from './store';
 export * from './input';
 export * from './persistence';
+export * from './qdrantKnowledge';
 export * from './controller';
