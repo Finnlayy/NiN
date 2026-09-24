@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   ShieldCheck,
   AlertTriangle,
@@ -18,13 +18,13 @@ import {
   Info
 } from 'lucide-react';
 import {
-  getLiveOmegaTelemetry,
   verifyOmegaAxioms,
   calculateViaNegativa,
   calculateViaNegativaAnalysis,
   AxiomVerificationResult,
   ViaNegativaState
 } from '../utils/omegaLogic';
+import { useMarketFeed } from '../market/useMarketFeed';
 
 export interface SystemStatusProps {
   onLogEvent?: (message: string, level: 'info' | 'warn' | 'error' | 'success', node?: string) => void;
@@ -67,7 +67,8 @@ export default function SystemStatus({
   const [selectedSymbol, setSelectedSymbol] = useState<'BTC/USD' | 'SOL/USD' | 'SUI/USD' | 'ETH/USD'>(initialSymbol);
   
   // Real-time telemetry baseline
-  const [telemetry, setTelemetry] = useState(() => getLiveOmegaTelemetry());
+  const market = useMarketFeed();
+  const [telemetry, setTelemetry] = useState(market.telemetry);
   const [lastTick, setLastTick] = useState<string>(() => new Date().toLocaleTimeString('de-DE'));
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
   const [expandedAxiomId, setExpandedAxiomId] = useState<number | null>(null);
@@ -76,15 +77,26 @@ export default function SystemStatus({
   const [diagnosticMode, setDiagnosticMode] = useState<DiagnosticMode>('NOMINAL');
 
   // Asset price & volatility specs
-  const assetSpecs: Record<string, { basePrice: number; atr: number; step: number }> = useMemo(() => ({
-    'BTC/USD': { basePrice: 64280.50, atr: 420.0, step: 10 },
-    'SOL/USD': { basePrice: 182.40, atr: 5.80, step: 0.1 },
-    'SUI/USD': { basePrice: 3.42, atr: 0.18, step: 0.01 },
-    'ETH/USD': { basePrice: 2780.00, atr: 38.5, step: 1 },
-  }), []);
+  useEffect(() => {
+    if (market.telemetry) setTelemetry(market.telemetry);
+  }, [market.telemetry]);
+
+  const assetSpecs: Record<string, { basePrice: number; atr: number; step: number } | null> = useMemo(() => {
+    const build = (display: string, step: number) => {
+      const quote = market.quoteFor(display);
+      if (!quote || !(quote.last > 0) || !(quote.atr14 && quote.atr14 > 0)) return null;
+      return { basePrice: quote.last, atr: quote.atr14, step };
+    };
+    return {
+      'BTC/USD': build('BTC/USD', 10),
+      'SOL/USD': build('SOL/USD', 0.1),
+      'SUI/USD': build('SUI/USD', 0.01),
+      'ETH/USD': build('ETH/USD', 1),
+    };
+  }, [market.feed, market.computation]);
 
   // Compute active target price based on diagnostic simulation
-  const currentSpec = assetSpecs[selectedSymbol] || assetSpecs['BTC/USD'];
+  const currentSpec = assetSpecs[selectedSymbol] ?? assetSpecs['BTC/USD'] ?? { basePrice: 0, atr: 0, step: 1 };
   const activeTargetPrice = useMemo(() => {
     if (diagnosticMode === 'BREACH_ZONE') {
       // Intentionally push price past upper exclusion bound
@@ -99,12 +111,13 @@ export default function SystemStatus({
 
   // Compute candidate direction
   const activeDirection = useMemo<'LONG' | 'SHORT'>(() => {
+    if (!telemetry) return 'LONG';
     if (diagnosticMode === 'COUNTER_GRAVITY') {
       // Force short when gravity is positive (or vice-versa)
       return telemetry.gravityField.gravityForce >= 0 ? 'SHORT' : 'LONG';
     }
     return 'LONG';
-  }, [diagnosticMode, telemetry.gravityField.gravityForce]);
+  }, [diagnosticMode, telemetry]);
 
   // Compute stop-loss price
   const activeStopLoss = useMemo(() => {
@@ -121,6 +134,19 @@ export default function SystemStatus({
 
   // Active AC System telemetry adjusted for diagnostic mode
   const activeAcSystem = useMemo(() => {
+    if (!telemetry) {
+      return {
+        activePower: 0,
+        reactivePower: 0,
+        apparentPower: 0,
+        powerFactor: 0,
+        regime: 'NORMAL' as const,
+        htfPhase: 0,
+        ltfPhase: 0,
+        hilbertResonance: 0,
+        isConstructiveInterference: false,
+      };
+    }
     if (diagnosticMode === 'FAKEOUT_PHASE') {
       return {
         ...telemetry.acSystem,
@@ -131,10 +157,11 @@ export default function SystemStatus({
       };
     }
     return telemetry.acSystem;
-  }, [diagnosticMode, telemetry.acSystem]);
+  }, [diagnosticMode, telemetry]);
 
   // Re-verify the 6 axioms against the active engine state
   const axiomVerification: AxiomVerificationResult[] = useMemo(() => {
+    if (!telemetry || currentSpec.basePrice <= 0) return [];
     return verifyOmegaAxioms(
       {
         symbol: selectedSymbol,
@@ -148,7 +175,7 @@ export default function SystemStatus({
       activeAcSystem,
       telemetry.basket
     );
-  }, [selectedSymbol, activeTargetPrice, activeDirection, activeStopLoss, liveViaNegativa, telemetry.gravityField, activeAcSystem, telemetry.basket]);
+  }, [selectedSymbol, activeTargetPrice, activeDirection, activeStopLoss, liveViaNegativa, telemetry, activeAcSystem]);
 
   // Comprehensive Via Negativa safe zone analysis
   const vnAnalysis = useMemo(() => {
@@ -179,17 +206,16 @@ export default function SystemStatus({
   // Refresh handler
   const handleRefresh = useCallback(() => {
     setIsRefreshing(true);
-    const updated = getLiveOmegaTelemetry();
-    setTelemetry(updated);
-    setLastTick(new Date().toLocaleTimeString('de-DE'));
-    onLogEvent?.("Omega Engine telemetry refreshed. Invariant verification updated.", "info", "SystemStatus");
-    setTimeout(() => {
+    void market.calculate().finally(() => {
+      setLastTick(new Date().toLocaleTimeString('de-DE'));
+      onLogEvent?.("Omega Engine telemetry refreshed. Invariant verification updated.", "info", "SystemStatus");
       setIsRefreshing(false);
-    }, 450);
-  }, [onLogEvent]);
+    });
+  }, [market, onLogEvent]);
 
   // Format the 6 axioms for structured rendering with quantitative health metrics
   const axiomCards: AxiomHealthSummary[] = useMemo(() => {
+    if (!telemetry) return [];
     return [
       // Axiom 1 (§14.1)
       {
@@ -511,7 +537,7 @@ export default function SystemStatus({
             {lastTick}
           </div>
           <div className="text-[10px] text-slate-400 mt-2 flex items-center justify-between">
-            <span>Spot: ${currentSpec.basePrice.toLocaleString()}</span>
+            <span>Spot: {currentSpec.basePrice > 0 ? `$${currentSpec.basePrice.toLocaleString()}` : 'Quote fehlt'}</span>
             <span className="text-cyan-400">Δt=60m</span>
           </div>
         </div>

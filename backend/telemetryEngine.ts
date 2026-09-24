@@ -1,3 +1,5 @@
+import { mergeGravitySnapshots, type GravitySummary } from '../src/market/krakenLive';
+
 /**
  * Production-Grade Engine Telemetry Bridge & Fail-Closed Wire Contract
  * 
@@ -118,9 +120,9 @@ class EngineTelemetryHub {
   private totalErrors: number = 0;
   private timer: NodeJS.Timeout | null = null;
   private clockCounter: number = 100.0;
+  private latest: GravitySummary[] = [];
 
   constructor() {
-    this.seedInitialTicks();
     this.startLiveEngineProducer();
   }
 
@@ -130,10 +132,20 @@ class EngineTelemetryHub {
     return ((ms * 1000000n) + subMs).toString();
   }
 
-  private seedInitialTicks() {
-    this.emitMicrostructureTick('BTC/USD', 0.42, 1420.5, [14, 8, -5, -12, 6, 22, 18, 9, -4, 11, 28, 15]);
-    this.emitGravityTick('BTC/USD', 0.78, 0.62, 0.49, 0.25 * 0.78 + 0.35 * 0.62 + 0.40 * 0.49);
-    this.emitRegimeTick('BTC/USD', 1, 0.94, 0);
+  public publishIntel(snapshots: GravitySummary[]): void {
+    this.latest = mergeGravitySnapshots(this.latest, snapshots).filter((row) => row.atr14 > 0);
+    this.emitFromLatest();
+  }
+
+  private emitFromLatest(): void {
+    for (const row of this.latest) {
+      const outside = row.last < row.bLower || row.last > row.bUpper ? 1 : 0;
+      const cluster = row.direction === 'BULLISH' ? 1 : row.direction === 'BEARISH' ? -1 : 0;
+      this.emitGravityTick(row.display, row.visibleL2Depth, 0, 0, row.forceNet);
+      this.emitRegimeTick(row.display, cluster, Math.min(1, Math.abs(row.forceNet)), outside);
+      const imbalance = row.ask > row.bid && row.last > 0 ? Number(((row.bid - row.ask) / row.last).toFixed(4)) : 0;
+      this.emitMicrostructureTick(row.display, imbalance, row.visibleL2Depth, [row.bLower, row.last, row.bUpper]);
+    }
   }
 
   public emitRecord(kind: TelemetryKind, symbol: string, payload: unknown): boolean {
@@ -200,26 +212,8 @@ class EngineTelemetryHub {
 
   private startLiveEngineProducer() {
     this.timer = setInterval(() => {
-      const symbols = ['BTC/USD', 'ETH/USD', 'SOL/USD'];
-      const sym = symbols[Math.floor(Math.random() * symbols.length)];
-
-      // 1. Microstructure tick
-      const imbalance = Number((Math.sin(Date.now() / 15000) * 0.6 + (Math.random() * 0.2 - 0.1)).toFixed(3));
-      const depth2pct = Number((1200 + Math.random() * 400).toFixed(1));
-      const footprint = Array.from({ length: 12 }, () => Math.floor(Math.random() * 60 - 25));
-      this.emitMicrostructureTick(sym, imbalance, depth2pct, footprint);
-
-      // 2. Gravity tick: 0.25 * l2 + 0.35 * l3 + 0.40 * poly
-      const l2 = Number((0.70 + Math.random() * 0.25).toFixed(3));
-      const l3 = Number((0.55 + Math.random() * 0.30).toFixed(3));
-      const poly = Number((0.45 + Math.random() * 0.20).toFixed(3));
-      const vTotal = 0.25 * l2 + 0.35 * l3 + 0.40 * poly;
-      this.emitGravityTick(sym, l2, l3, poly, vTotal);
-
-      // 3. Regime tick
-      const isForbidden = vTotal < 0.30 || vTotal > 0.95 ? 1 : 0;
-      const confidence = Number((0.85 + Math.random() * 0.12).toFixed(3));
-      this.emitRegimeTick(sym, 1, confidence, isForbidden);
+      if (this.latest.length === 0) return;
+      this.emitFromLatest();
     }, 1200);
   }
 

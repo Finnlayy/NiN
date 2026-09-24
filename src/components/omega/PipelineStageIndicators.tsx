@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useMarketFeed } from '../../market/useMarketFeed';
 import {
   Workflow,
   CheckCircle2,
@@ -37,6 +38,11 @@ export default function PipelineStageIndicators({
     onSelectStep?.(step);
   };
 
+  const market = useMarketFeed();
+  const btcQuote = market.quoteFor('BTC/USD');
+  const btcUsd = btcQuote && btcQuote.last > 0 ? btcQuote.last : null;
+  const btcAtr = btcQuote?.atr14 && btcQuote.atr14 > 0 ? btcQuote.atr14 : null;
+  const usd = (price: number) => `$${Math.round(price).toLocaleString('en-US')} USD`;
   const stages: PipelineStage[] = [
     {
       step: 1,
@@ -102,9 +108,9 @@ export default function PipelineStageIndicators({
       status: 'ACTIVE',
       latencyMs: 8.2,
       telemetryMetrics: [
-        { label: 'Baseline Mittelwert', value: '$64,280 USD', isHighlighted: true },
-        { label: 'Oberes Band (+2.5σ)', value: '$66,400 USD' },
-        { label: 'Unteres Band (-2.5σ)', value: '$62,150 USD' },
+        { label: 'Baseline Mittelwert', value: btcUsd ? usd(btcUsd) : '—', isHighlighted: true },
+        { label: 'Oberes Band (+2.5σ)', value: btcUsd && btcAtr ? usd(btcUsd + 2.5 * btcAtr) : '—' },
+        { label: 'Unteres Band (-2.5σ)', value: btcUsd && btcAtr ? usd(btcUsd - 2.5 * btcAtr) : '—' },
         { label: 'Gaußscher Kernel', value: 'N(μ, σ²) Satisfied' },
       ],
       invariants: ['Ortswahrscheinlichkeitsdichte im Hilbert-Raum', 'Mean-Reversion Attraktor P*'],

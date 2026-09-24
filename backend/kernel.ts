@@ -1,3 +1,5 @@
+import { mergeGravitySnapshots, pairsMatch, type GravitySummary } from '../src/market/krakenLive';
+
 /**
  * Rust Compute Kernel Connector & Real-Time Log Engine
  * 
@@ -101,6 +103,7 @@ class RustKernelEngine {
   private startTime: number = Date.now();
   private totalClosures: number = 0;
   private totalRollbacks: number = 0;
+  private intel: GravitySummary[] = [];
 
   constructor() {
     this.seedInitialHistory();
@@ -146,21 +149,15 @@ class RustKernelEngine {
       metadata: { mmap_addr: '0x7f9e8000', size_mb: 4, cas_latency_ns: 8.2 }
     });
 
-    // Seed first historical successful atomic trade closure
-    this.executeAtomicClosure({
-      mode: 'NORMAL',
-      closureId: 'ATC-20260907-88219',
-      symbols: ['BTC/USD', 'ETH/USD', 'SOL/USD'],
-      notional: 384500,
-    });
+  }
 
-    // Seed a second historic event with partial fill detected and safe rollback
-    this.executeAtomicClosure({
-      mode: 'SLIPPAGE_FAIL',
-      closureId: 'ATC-20260907-88340',
-      symbols: ['AVAX/USD', 'LINK/USD'],
-      notional: 142000,
-    });
+  public applyIntel(snapshots: GravitySummary[]): void {
+    this.intel = mergeGravitySnapshots(this.intel, snapshots);
+  }
+
+  private lastFor(symbol: string): number | null {
+    const snap = this.intel.find((row) => pairsMatch(row.display, symbol) || pairsMatch(row.pair, symbol));
+    return snap && snap.last > 0 ? snap.last : null;
   }
 
   public executeAtomicClosure(options: {
@@ -240,11 +237,21 @@ class RustKernelEngine {
     }, clockOffset);
 
     // Legs generation
-    const legs: AtomicClosureLeg[] = targetSymbols.map((sym, idx) => {
+    const legs: AtomicClosureLeg[] = targetSymbols.flatMap((sym, idx) => {
+      const basePrice = this.lastFor(sym);
+      if (!basePrice) {
+        this.pushLog({
+          level: 'WARN',
+          thread: 'core-04:order-bus',
+          phase: 'PARTIAL_FILL_GUARD',
+          closureId,
+          message: `[${closureId}] Leg ${sym} übersprungen: kein Intel-Lastkurs. Kein Demo-Fill.`,
+          metadata: { symbol: sym }
+        }, clockOffset);
+        return [];
+      }
       clockOffset += 18;
       const legNotional = Math.round(notional / targetSymbols.length);
-      const isBtc = sym.includes('BTC');
-      const basePrice = isBtc ? 61400 : sym.includes('ETH') ? 2840 : sym.includes('SOL') ? 148 : 28;
       const qty = Number((legNotional / basePrice).toFixed(4));
       
       const isFailedLeg = isRollback && idx === targetSymbols.length - 1;
@@ -263,10 +270,10 @@ class RustKernelEngine {
         metadata: { symbol: sym, qty, fillPrice, slippage, status }
       }, clockOffset);
 
-      return {
+      return [{
         legId: `LEG-${idx + 1}`,
         symbol: sym,
-        side: 'SELL',
+        side: 'SELL' as const,
         quantity: qty,
         limitPrice: basePrice,
         fillPrice,
@@ -274,8 +281,28 @@ class RustKernelEngine {
         venue: 'KRAKEN_WS_NATIVE',
         latencyMicros: 34 + Math.floor(Math.random() * 25),
         fillStatus: status,
-      };
+      }];
     });
+
+    if (legs.length === 0) {
+      const aborted: AtomicClosureRecord = {
+        closureId,
+        timestampNanos: this.nextNanos(clockOffset),
+        status: 'PREFLIGHT_ABORTED',
+        totalNotionalUsd: 0,
+        executionTimeMicros: clockOffset,
+        maxSlippageBps: 0,
+        realizedSlippageBps: 0,
+        preTradeMarginRatio: 0,
+        postTradeMarginRatio: 0,
+        cashVaultReservePre: 0,
+        cashVaultReservePost: 0,
+        legs: [],
+        axiomsVerified: axioms,
+      };
+      this.closures.set(closureId, aborted);
+      return aborted;
+    }
 
     // 4. ATOMIC COMMIT OR ROLLBACK
     clockOffset += 28;

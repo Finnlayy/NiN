@@ -280,6 +280,11 @@ export default function GPMIncubationArena({
       <div className="absolute bottom-0 left-1/4 w-96 h-96 bg-cyan-500/5 rounded-full blur-3xl pointer-events-none" />
 
       {/* Top Banner Notice (Live Promotion Trigger Feedback) */}
+      {candidates.length === 0 && (
+        <p className="text-xs font-mono text-slate-400" role="status">
+          Keine private Trade-Historie. GPM bleibt leer, statt erfundene Schatten-PnL zu zeigen.
+        </p>
+      )}
       {deploymentSuccessNotice && (
         <div className="p-3 bg-emerald-500/20 border border-emerald-500/50 rounded-xl text-emerald-300 font-mono text-xs flex items-center justify-between animate-in fade-in slide-in-from-top-2 duration-300">
           <div className="flex items-center gap-2">

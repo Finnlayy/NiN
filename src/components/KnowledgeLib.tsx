@@ -2,7 +2,7 @@ import { useState, useMemo } from 'react';
 import { Database, Image as ImageIcon, Search, ChevronRight, Maximize2, X, Terminal } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import TradingViewChart from './TradingViewChart';
-import { generateOHLCData } from '../utils/mockData';
+import type { Time } from 'lightweight-charts';
 
 const HOUR_MS = 60 * 60 * 1000;
 
@@ -26,6 +26,14 @@ type VisionAsset = {
   confidence: number;
 };
 
+interface KnowledgeOhlcBar {
+  time: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+}
+
 interface KnowledgeLibProps {
   isAnalyzing: boolean;
   analysisResult: string | null;
@@ -33,6 +41,7 @@ interface KnowledgeLibProps {
   onAnalyze: () => void;
   onOrchestrateOrder: () => void;
   onCloseModal: () => void;
+  ohlc?: KnowledgeOhlcBar[] | null;
 }
 
 export default function KnowledgeLib({
@@ -41,7 +50,8 @@ export default function KnowledgeLib({
   orderState,
   onAnalyze,
   onOrchestrateOrder,
-  onCloseModal
+  onCloseModal,
+  ohlc = null,
 }: KnowledgeLibProps) {
   const [selectedPhoto, setSelectedPhoto] = useState<VisionAsset | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -56,8 +66,7 @@ export default function KnowledgeLib({
     [],
   );
 
-  // Generate stable mock data for the chart
-  const chartData = useMemo(() => generateOHLCData(120), []);
+  const chartData = useMemo(() => ohlc ?? [], [ohlc]);
 
   const handleCloseModal = () => {
     setSelectedPhoto(null);
@@ -189,11 +198,15 @@ export default function KnowledgeLib({
                 </div>
               </div>
               <div className="p-1 bg-[#0a0c10] relative">
-                <TradingViewChart 
-                  data={chartData} 
-                  highlightStartIndex={chartData.length - 40} 
-                  highlightEndIndex={chartData.length - 10} 
-                />
+                {chartData.length > 0 ? (
+                  <TradingViewChart 
+                    data={chartData.map((bar) => ({ ...bar, time: bar.time as Time }))} 
+                    highlightStartIndex={Math.max(0, chartData.length - 40)} 
+                    highlightEndIndex={Math.max(0, chartData.length - 10)}
+                  />
+                ) : (
+                  <p className="text-sm text-slate-400 font-mono p-6">Keine Kraken-OHLC für BTC/USD. Der Chart bleibt leer, bis die Kerzen geladen sind.</p>
+                )}
               </div>
               <div className="p-4 bg-[#0a0c10] border-t border-slate-800 flex items-center justify-between">
                  <div className="flex gap-4 items-center">

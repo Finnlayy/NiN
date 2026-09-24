@@ -13,15 +13,43 @@ import { KrakenOrderExecutor } from './kraken';
 import { multiProviderCore } from './multiProvider';
 import { createServer as createViteServer } from 'vite';
 import { 
-  getLiveOmegaTelemetry, 
   verifyOmegaAxioms
 } from '../src/utils/omegaLogic';
+import {
+  buildPublicFeed,
+  computeGravity,
+  leaderPricesFromQuotes,
+  loadPairQuote,
+  telemetryFromComputation,
+  type GravitySummary,
+  type KrakenPrivateStatus,
+} from '../src/market/krakenLive';
+import { fanoutIntel } from './intelFanout';
 import { kernelEngine } from './kernel';
 import { engineTelemetryHub } from './telemetryEngine';
 import { botRegistry } from './bots';
 import { handleNeuralRequest } from './neuralRoutes';
 
 const krakenExecutor = new KrakenOrderExecutor();
+
+function privateStatus(connected: boolean): KrakenPrivateStatus {
+  return {
+    connected,
+    balances: null,
+    openOrders: null,
+    tradeHistory: null,
+  };
+}
+
+async function liveTelemetry() {
+  const feed = await buildPublicFeed(privateStatus(krakenExecutor.isConnected()));
+  const symbol = feed.catalog.find((row) => row.display === 'BTC/USD');
+  if (!symbol) return null;
+  const quote = await loadPairQuote(symbol, feed.quotes[symbol.pair]);
+  const computation = quote ? computeGravity(quote) : null;
+  if (computation) fanoutIntel([computation.summary], krakenExecutor);
+  return telemetryFromComputation(computation, leaderPricesFromQuotes(feed.quotes), null);
+}
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
   const payload = JSON.stringify(body);
@@ -276,16 +304,38 @@ async function startServer() {
         return;
       }
 
+      if (method === 'GET' && url === '/api/market/feed') {
+        const feed = await buildPublicFeed(privateStatus(krakenExecutor.isConnected()));
+        sendJson(res, 200, feed);
+        return;
+      }
+
+      if (method === 'POST' && url === '/api/market/intel') {
+        const body = await readJsonBody(req);
+        const snapshots = Array.isArray(body.snapshots) ? body.snapshots as GravitySummary[] : [];
+        fanoutIntel(snapshots, krakenExecutor);
+        sendJson(res, 200, { accepted: snapshots.length });
+        return;
+      }
+
       if (method === 'GET' && url === '/api/omega/telemetry') {
-        const data = getLiveOmegaTelemetry();
-        sendJson(res, 200, data);
+        const telemetry = await liveTelemetry();
+        if (!telemetry) {
+          sendJson(res, 503, { error: 'Kraken-Quote fehlt. Telemetrie bleibt leer.' });
+          return;
+        }
+        sendJson(res, 200, telemetry);
         return;
       }
 
       if (method === 'POST' && url === '/api/omega/validate-axioms') {
         try {
           const body = await readJsonBody(req);
-          const telemetry = getLiveOmegaTelemetry();
+          const telemetry = await liveTelemetry();
+          if (!telemetry) {
+            sendJson(res, 503, { error: 'Kraken-Quote fehlt. Axiom-Prüfung bleibt leer.' });
+            return;
+          }
           const targetPrice = Number(body.targetPrice || telemetry.viaNegativa.spotPrice);
           const exchangeStopLossPrice = body.exchangeStopLossPrice ? Number(body.exchangeStopLossPrice) : undefined;
           const direction = body.direction === 'SHORT' ? 'SHORT' : 'LONG';

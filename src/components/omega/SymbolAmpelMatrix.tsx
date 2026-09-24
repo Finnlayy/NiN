@@ -1,4 +1,6 @@
 import { useState, useMemo } from 'react';
+import { useMarketFeed } from '../../market/useMarketFeed';
+import { leaderPricesFromQuotes } from '../../market/krakenLive';
 import {
   TrendingUp,
   Search,
@@ -36,6 +38,7 @@ export default function SymbolAmpelMatrix({
   const [selectedLampFilter, setSelectedLampFilter] = useState<'ALL' | SymbolLampState>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
   const [inspectToken, setInspectToken] = useState<EcosystemToken | null>(null);
+  const market = useMarketFeed();
 
   // Canonical token list based on OMEGA-BLUEPRINT §8
   const tokens: EcosystemToken[] = useMemo(() => [
@@ -179,7 +182,7 @@ export default function SymbolAmpelMatrix({
       metaScore: 2.40,
       lampState: 'GREEN_SOLID',
       isLeader: true,
-      priceUSD: 64280.0,
+      priceUSD: 0,
       change24h: 3.8,
       tradeStatus: 'ACTIVE_PYRAMID',
     },
@@ -233,9 +236,20 @@ export default function SymbolAmpelMatrix({
     },
   ], []);
 
+  const pricedTokens = useMemo(() => {
+    const live = new Map(leaderPricesFromQuotes(market.feed?.quotes ?? {}).map((row) => [row.symbol, row]));
+    return tokens.map((token) => {
+      const quote = live.get(token.symbol);
+      if (!quote || !(quote.priceUSD > 0)) {
+        return { ...token, priceUSD: Number.NaN, change24h: Number.NaN };
+      }
+      return { ...token, priceUSD: quote.priceUSD, change24h: quote.change24h };
+    });
+  }, [tokens, market.feed]);
+
   // Filtered tokens
   const filteredTokens = useMemo(() => {
-    return tokens.filter(t => {
+    return pricedTokens.filter(t => {
       if (selectedCluster !== 'ALL' && t.cluster !== selectedCluster) return false;
       if (selectedLampFilter !== 'ALL' && t.lampState !== selectedLampFilter) return false;
       if (searchQuery.trim()) {
@@ -244,7 +258,7 @@ export default function SymbolAmpelMatrix({
       }
       return true;
     });
-  }, [tokens, selectedCluster, selectedLampFilter, searchQuery]);
+  }, [pricedTokens, selectedCluster, selectedLampFilter, searchQuery]);
 
   // Lamp Badge Renderer
   const renderLampBadge = (state: SymbolLampState, isLeader: boolean) => {
@@ -461,10 +475,12 @@ export default function SymbolAmpelMatrix({
                   </span>
                 </td>
                 <td className="py-3 px-3 font-semibold text-slate-200">
-                  ${tok.priceUSD < 1 ? tok.priceUSD.toFixed(3) : tok.priceUSD.toLocaleString()}
-                  <span className={`text-[10px] ml-1.5 ${tok.change24h >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                    {tok.change24h >= 0 ? `+${tok.change24h}%` : `${tok.change24h}%`}
-                  </span>
+                  {Number.isFinite(tok.priceUSD) ? (tok.priceUSD < 1 ? tok.priceUSD.toFixed(3) : tok.priceUSD.toLocaleString()) : '—'}
+                  {Number.isFinite(tok.change24h) && (
+                    <span className={`text-[10px] ml-1.5 ${tok.change24h >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                      {tok.change24h >= 0 ? `+${tok.change24h.toFixed(2)}%` : `${tok.change24h.toFixed(2)}%`}
+                    </span>
+                  )}
                 </td>
                 <td className="py-3 px-3 font-semibold text-slate-300">
                   {tok.correlationLead.toFixed(2)}

@@ -1,6 +1,7 @@
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import fs from 'fs';
+import { mergeGravitySnapshots, pairsMatch, type GravitySummary } from '../src/market/krakenLive';
 
 const execAsync = promisify(exec);
 
@@ -20,6 +21,9 @@ export interface KrakenLimbStatus {
   filledCount: number;
   interval?: string;
   lastExecution?: string;
+  last?: number;
+  bLower?: number;
+  bUpper?: number;
 }
 
 export interface KrakenRecentOrder {
@@ -37,6 +41,7 @@ export interface KrakenRecentOrder {
 export class KrakenOrderExecutor {
   private cliPath: string;
   private recentOrdersList: KrakenRecentOrder[] = [];
+  private intel: GravitySummary[] = [];
 
   constructor() {
     this.cliPath = process.env.KRAKEN_CLI_PATH || '/root/.cargo/bin/kraken';
@@ -177,6 +182,22 @@ export class KrakenOrderExecutor {
    * If there is no connection, connected is strictly false,
    * filledCount is 0, and recentOrders is empty.
    */
+  applyIntel(snapshots: GravitySummary[]): void {
+    this.intel = mergeGravitySnapshots(this.intel, snapshots);
+  }
+
+  lookupLast(pair: string): number | null {
+    const snap = this.intel.find((row) => pairsMatch(row.pair, pair) || pairsMatch(row.display, pair));
+    return snap && snap.last > 0 ? snap.last : null;
+  }
+
+  private withIntel(limb: KrakenLimbStatus): KrakenLimbStatus {
+    if (limb.status !== 'ONLINE' && limb.status !== 'ACTIVE') return limb;
+    const snap = this.intel.find((row) => pairsMatch(row.pair, limb.pair) || pairsMatch(row.display, limb.pair));
+    if (!snap) return limb;
+    return { ...limb, last: snap.last, bLower: snap.bLower, bUpper: snap.bUpper };
+  }
+
   getExecutionStatus(): any {
     const connected = this.isConnected();
 
@@ -192,11 +213,11 @@ export class KrakenOrderExecutor {
         autoEarnFlexibleApy: null,
         reason: `Keine Verbindung zu Kraken. Weder '${this.cliPath}' noch KRAKEN_API_KEY/KRAKEN_API_SECRET vorhanden. Keine Schein-Simulation aktiv.`,
         limbs: {
-          limb_1: { name: 'Swarm Limb 1 (Scout Node)', pair: 'XXBTZUSD', mode: 'Trigger Scout Tranche', status: 'DISCONNECTED', filledCount: 0 },
-          limb_2: { name: 'Swarm Limb 2 (Pyramid Node)', pair: 'XXBTZUSD', mode: 'ATR Trailing Tranches', status: 'DISCONNECTED', filledCount: 0 },
-          limb_3: { name: 'Swarm Limb 3 (Cluster Exit)', pair: 'XXBTZUSD', mode: 'Atomic Market Ground State', status: 'DISCONNECTED', filledCount: 0 },
-          limb_4: { name: 'Swarm Limb 4 (Btc Dca)', pair: 'XXBTZUSD', mode: 'Dynamic Dip-DCA ($150)', status: 'DISCONNECTED', interval: 'Inactive (No Connection)', lastExecution: 'Never', filledCount: 0 },
-          limb_5: { name: 'Swarm Limb 5 (Sol Dca)', pair: 'SOLUSD', mode: 'High-Beta Dip Accumulation ($75)', status: 'DISCONNECTED', interval: 'Inactive (No Connection)', lastExecution: 'Never', filledCount: 0 }
+          limb_1: this.withIntel({ name: 'Swarm Limb 1 (Scout Node)', pair: 'XXBTZUSD', mode: 'Trigger Scout Tranche', status: 'DISCONNECTED', filledCount: 0 }),
+          limb_2: this.withIntel({ name: 'Swarm Limb 2 (Pyramid Node)', pair: 'XXBTZUSD', mode: 'ATR Trailing Tranches', status: 'DISCONNECTED', filledCount: 0 }),
+          limb_3: this.withIntel({ name: 'Swarm Limb 3 (Cluster Exit)', pair: 'XXBTZUSD', mode: 'Atomic Market Ground State', status: 'DISCONNECTED', filledCount: 0 }),
+          limb_4: this.withIntel({ name: 'Swarm Limb 4 (Btc Dca)', pair: 'XXBTZUSD', mode: 'Dynamic Dip-DCA ($150)', status: 'DISCONNECTED', interval: 'Inactive (No Connection)', lastExecution: 'Never', filledCount: 0 }),
+          limb_5: this.withIntel({ name: 'Swarm Limb 5 (Sol Dca)', pair: 'SOLUSD', mode: 'High-Beta Dip Accumulation ($75)', status: 'DISCONNECTED', interval: 'Inactive (No Connection)', lastExecution: 'Never', filledCount: 0 })
         },
         recentOrders: []
       };
@@ -208,11 +229,11 @@ export class KrakenOrderExecutor {
       engine: 'Kraken CLI Gateway',
       status: 'ONLINE',
       limbs: {
-        limb_1: { name: 'Swarm Limb 1 (Scout Node)', pair: 'XXBTZUSD', mode: 'Trigger Scout Tranche', status: 'ONLINE', filledCount: 0 },
-        limb_2: { name: 'Swarm Limb 2 (Pyramid Node)', pair: 'XXBTZUSD', mode: 'ATR Trailing Tranches', status: 'ONLINE', filledCount: 0 },
-        limb_3: { name: 'Swarm Limb 3 (Cluster Exit)', pair: 'XXBTZUSD', mode: 'Atomic Market Ground State', status: 'ONLINE', filledCount: 0 },
-        limb_4: { name: 'Swarm Limb 4 (Btc Dca)', pair: 'XXBTZUSD', mode: 'Dynamic Dip-DCA ($150)', status: 'ACTIVE', interval: 'Every 4h or Dip > -2.5%', lastExecution: 'Idle', filledCount: 0 },
-        limb_5: { name: 'Swarm Limb 5 (Sol Dca)', pair: 'SOLUSD', mode: 'High-Beta Dip Accumulation ($75)', status: 'ACTIVE', interval: 'Every 4h or Dip > -4.0%', lastExecution: 'Idle', filledCount: 0 }
+        limb_1: this.withIntel({ name: 'Swarm Limb 1 (Scout Node)', pair: 'XXBTZUSD', mode: 'Trigger Scout Tranche', status: 'ONLINE', filledCount: 0 }),
+        limb_2: this.withIntel({ name: 'Swarm Limb 2 (Pyramid Node)', pair: 'XXBTZUSD', mode: 'ATR Trailing Tranches', status: 'ONLINE', filledCount: 0 }),
+        limb_3: this.withIntel({ name: 'Swarm Limb 3 (Cluster Exit)', pair: 'XXBTZUSD', mode: 'Atomic Market Ground State', status: 'ONLINE', filledCount: 0 }),
+        limb_4: this.withIntel({ name: 'Swarm Limb 4 (Btc Dca)', pair: 'XXBTZUSD', mode: 'Dynamic Dip-DCA ($150)', status: 'ACTIVE', interval: 'Every 4h or Dip > -2.5%', lastExecution: 'Idle', filledCount: 0 }),
+        limb_5: this.withIntel({ name: 'Swarm Limb 5 (Sol Dca)', pair: 'SOLUSD', mode: 'High-Beta Dip Accumulation ($75)', status: 'ACTIVE', interval: 'Every 4h or Dip > -4.0%', lastExecution: 'Idle', filledCount: 0 })
       },
       recentOrders: this.recentOrdersList
     };
@@ -223,8 +244,15 @@ export class KrakenOrderExecutor {
    */
   async executeDca(limb: 4 | 5, asset: 'BTC' | 'SOL', amountUSD: number): Promise<any> {
     const pair = asset === 'BTC' ? 'XXBTZUSD' : 'SOLUSD';
-    const estPrice = asset === 'BTC' ? 64200 : 145;
-    const volume = Number((amountUSD / estPrice).toFixed(asset === 'BTC' ? 6 : 4));
+    const last = this.lookupLast(pair);
+    if (!last) {
+      return {
+        success: false,
+        connected: this.isConnected(),
+        error: `Kein Kraken-Lastkurs für ${pair}. DCA legt keine Order mit einem Ersatzpreis an.`,
+      };
+    }
+    const volume = Number((amountUSD / last).toFixed(asset === 'BTC' ? 6 : 4));
 
     return this.executeOrder(
       {

@@ -22,6 +22,7 @@ import { ViaNegativaState, GravityFieldState } from '../utils/omegaLogic';
 
 export interface GravityFieldVisualizerProps {
   spotPrice?: number;
+  visibleL2Depth?: number;
   gravityField?: GravityFieldState;
   viaNegativa?: ViaNegativaState;
   onParametersChange?: (params: { l2Depth: number; icebergDepth: number; polyProb: number; pStar: number }) => void;
@@ -43,7 +44,8 @@ interface PotentialPoint {
 }
 
 export default function GravityFieldVisualizer({
-  spotPrice = 64280,
+  spotPrice,
+  visibleL2Depth,
   gravityField,
   viaNegativa,
   onParametersChange,
@@ -53,7 +55,7 @@ export default function GravityFieldVisualizer({
 }: GravityFieldVisualizerProps) {
   // Chart Display Mode: Potential Well V(P), Force Gradient F(P), or Dual Split
   const [chartMode, setChartMode] = useState<'POTENTIAL_WELL' | 'FORCE_GRADIENT' | 'SPLIT_VIEW'>(initialMode);
-  const [isLiveDrift, setIsLiveDrift] = useState<boolean>(true);
+  const [isLiveDrift, setIsLiveDrift] = useState<boolean>(false);
 
   // Component Visibilities
   const [showTotal, setShowTotal] = useState<boolean>(true);
@@ -70,7 +72,7 @@ export default function GravityFieldVisualizer({
   const [polyProb, setPolyProb] = useState<number>(0.78);
   const [l2Depth, setL2Depth] = useState<number>(1450); // Visible Bids/Asks depth
   const [icebergDepth, setIcebergDepth] = useState<number>(2200); // Shadow hidden depth
-  const [simulatedPrice, setSimulatedPrice] = useState<number>(spotPrice);
+  const [simulatedPrice, setSimulatedPrice] = useState<number>(spotPrice ?? 0);
 
   // Synchronize with external prop changes
   useEffect(() => {
@@ -133,10 +135,13 @@ export default function GravityFieldVisualizer({
   const forceNetAtSpot = useMemo(() => Number((deltaP * 0.14).toFixed(2)), [deltaP]);
 
   // Via Negativa Exclusion Boundaries
-  const bLower = viaNegativa?.bLower ?? spotPrice - 1800;
-  const bUpper = viaNegativa?.bUpper ?? spotPrice + 1800;
-  const isSpotForbidden = simulatedPrice <= bLower || simulatedPrice >= bUpper;
-  const isPStarForbidden = pStar <= bLower || pStar >= bUpper;
+  const hasBands = viaNegativa != null;
+  const bLower = viaNegativa?.bLower ?? (spotPrice ?? simulatedPrice);
+  const bUpper = viaNegativa?.bUpper ?? (spotPrice ?? simulatedPrice);
+  const headlinePStar = gravityField?.potentialMinimumPrice ?? pStar;
+  const shownDelta = typeof spotPrice === 'number' ? headlinePStar - spotPrice : deltaP;
+  const isSpotForbidden = hasBands && typeof spotPrice === 'number' && (spotPrice <= bLower || spotPrice >= bUpper);
+  const isPStarForbidden = hasBands && (headlinePStar <= bLower || headlinePStar >= bUpper);
 
   // Generate Potential & Force Curves across Price Spectrum
   const { points, curvatureKappa } = useMemo(() => {
@@ -314,7 +319,7 @@ export default function GravityFieldVisualizer({
     setL2Depth(l2);
     setIcebergDepth(ice);
     setPolyProb(poly);
-    if (spotAdj !== 0) {
+    if (spotAdj !== 0 && typeof spotPrice === 'number') {
       setSimulatedPrice(spotPrice + spotAdj);
     }
     if (onLogEvent) {
@@ -323,14 +328,23 @@ export default function GravityFieldVisualizer({
   };
 
   const handleReset = () => {
-    setPolyProb(0.78);
-    setL2Depth(1450);
-    setIcebergDepth(2200);
-    setSimulatedPrice(spotPrice);
+    if (visibleL2Depth && visibleL2Depth > 0) {
+      setL2Depth(Math.round(Math.min(2800, Math.max(600, visibleL2Depth))));
+    }
+    if (typeof spotPrice === 'number') setSimulatedPrice(spotPrice);
     if (onLogEvent) {
       onLogEvent('Gravitationsfeld-Parameter auf Standardwerte zurückgesetzt.', 'success', 'GravityVisualizer');
     }
   };
+
+  if (!(typeof spotPrice === 'number' && spotPrice > 0)) {
+    return (
+      <div id="gravity-field-visualizer" className={`glass-card rounded-2xl p-6 border border-slate-700 text-slate-300 ${className}`} role="status">
+        <h2 className="text-base font-bold text-white font-mono">§2 DREI-KOMPONENTEN-GRAVITATIONSFELD</h2>
+        <p className="text-sm text-slate-400 mt-2">Kraken-Quote fehlt. Das Gravitationsfeld bleibt leer, bis ein Lastkurs vorliegt.</p>
+      </div>
+    );
+  }
 
   return (
     <div id="gravity-field-visualizer" className={`glass-card rounded-2xl p-6 shadow-2xl border border-cyan-500/20 text-slate-200 relative overflow-hidden ${className}`}>
@@ -415,7 +429,8 @@ export default function GravityFieldVisualizer({
             id="gravity-reset-btn"
             onClick={handleReset}
             title="Auf Standardwerte zurücksetzen"
-            className="p-1.5 rounded-lg bg-slate-800/80 hover:bg-slate-700 border border-slate-700 text-slate-300 transition-colors"
+            aria-label="Auf Standardwerte zurücksetzen"
+            className="p-1.5 rounded-lg bg-slate-800/80 hover:bg-slate-700 border border-slate-700 text-slate-300 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
           >
             <RotateCcw className="w-4 h-4" />
           </button>
@@ -435,10 +450,10 @@ export default function GravityFieldVisualizer({
           </div>
           <div className="flex items-baseline justify-between mt-1.5">
             <span className="text-2xl font-mono font-bold text-emerald-300">
-              ${pStar.toLocaleString()}
+              ${headlinePStar.toLocaleString()}
             </span>
-            <span className={`text-xs font-mono font-bold ${deltaP >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-              {deltaP >= 0 ? `+${deltaP}` : deltaP} $
+            <span className={`text-xs font-mono font-bold ${shownDelta >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+              {shownDelta >= 0 ? '+' : ''}{shownDelta.toFixed(2)} $
             </span>
           </div>
           <div className="flex items-center justify-between text-[10px] font-mono text-slate-400 mt-2 pt-2 border-t border-slate-800">
@@ -466,7 +481,7 @@ export default function GravityFieldVisualizer({
           </div>
           <div className="flex items-baseline justify-between mt-1.5">
             <span className="text-2xl font-mono font-bold text-white">
-              ${simulatedPrice.toLocaleString()}
+              ${spotPrice.toLocaleString()}
             </span>
             <span className="text-xs font-mono text-slate-400">
               Kraken L2
@@ -575,6 +590,8 @@ export default function GravityFieldVisualizer({
             </marker>
           </defs>
 
+          {hasBands && (
+          <>
           {/* Via Negativa Exclusion Zones (Forbidden) */}
           {scaleX(bLower) > padX && (
             <rect
@@ -621,6 +638,8 @@ export default function GravityFieldVisualizer({
           <text x={scaleX(bUpper) + 6} y={padY + 12} fill="#f43f5e" fontSize="9" textAnchor="start" fontFamily="monospace">
             B_upper (${bUpper})
           </text>
+          </>
+          )}
 
           {/* ========================================================== */}
           {/* SECTION 1: POTENTIAL WELL VIEW V(P)                        */}
@@ -795,7 +814,7 @@ export default function GravityFieldVisualizer({
             fontFamily="monospace"
             fontWeight="bold"
           >
-            Spot (${simulatedPrice.toLocaleString()})
+            Spot (${spotPrice.toLocaleString()})
           </text>
 
           {/* Crosshair on Hover */}
