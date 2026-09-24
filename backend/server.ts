@@ -553,6 +553,13 @@ async function startServer() {
         return;
       }
 
+      // API paths must stay JSON. Falling through to the SPA shell makes
+      // clients throw "Unexpected token '<'" on `<!DOCTYPE html>`.
+      if (url === '/api' || url.startsWith('/api/')) {
+        sendJson(res, 404, { error: `Unknown API route: ${method} ${url}` });
+        return;
+      }
+
       // Let Vite handle all other requests
       if (dev && vite) {
         vite.middlewares(req, res, (err: any) => {

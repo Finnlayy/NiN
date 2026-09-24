@@ -13,6 +13,15 @@ export class GeminiCoreAdapter implements NeuralCoreAdapter {
 
   async execute(prompt: WrappedPrompt): Promise<NeuralCoreResponse> {
     const start = Date.now();
+    if (!process.env.GEMINI_API_KEY) {
+      return {
+        coreNodeId: 'antigravity-orchestrator',
+        output: 'Gemini API key is not configured. Set GEMINI_API_KEY, or switch the Neural Konsole engine to LM Studio.',
+        latencyMs: Date.now() - start,
+        metadata: { error: true },
+      };
+    }
+
     try {
       let finalMessage = prompt.userPrompt;
       

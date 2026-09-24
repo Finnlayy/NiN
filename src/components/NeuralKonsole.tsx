@@ -37,6 +37,42 @@ type Message = {
   metadata?: any;
 };
 
+type TaskApiResponse = {
+  output?: unknown;
+  error?: unknown;
+  latencyMs?: unknown;
+  coreNodeId?: unknown;
+  metadata?: {
+    interactionId?: unknown;
+    provider?: unknown;
+    model?: unknown;
+  };
+};
+
+function asText(value: unknown): string | undefined {
+  return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+async function readApiJson(res: Response): Promise<TaskApiResponse> {
+  const raw = await res.text();
+  const trimmed = raw.trim();
+  if (!trimmed || trimmed.startsWith('<')) {
+    throw new Error('Neural core returned the web page instead of JSON. /api/task did not run.');
+  }
+  try {
+    const parsed: unknown = JSON.parse(trimmed);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('Neural core returned an unexpected JSON shape.');
+    }
+    return parsed as TaskApiResponse;
+  } catch (err) {
+    if (err instanceof SyntaxError) {
+      throw new Error('Neural core returned an unreadable response.');
+    }
+    throw err;
+  }
+}
+
 export default function NeuralKonsole() {
   const [interactionId, setInteractionId] = useState<string | undefined>();
   const [messages, setMessages] = useState<Message[]>([
@@ -236,22 +272,23 @@ export default function NeuralKonsole() {
         })
       });
       
-      const data = await res.json();
+      const data = await readApiJson(res);
+      const interactionIdFromCore = asText(data.metadata?.interactionId);
       
-      if (data.metadata?.interactionId) {
-        setInteractionId(data.metadata.interactionId);
+      if (interactionIdFromCore) {
+        setInteractionId(interactionIdFromCore);
       }
       
       setMessages(prev => [...prev, {
         id: Math.random().toString(36).substring(2),
         role: 'system',
-        content: data.output || data.error || JSON.stringify(data),
+        content: asText(data.output) || asText(data.error) || JSON.stringify(data),
         metadata: { 
-          latency: data.latencyMs, 
-          nodeId: data.coreNodeId,
-          provider: data.metadata?.provider,
-          model: data.metadata?.model,
-          interactionId: data.metadata?.interactionId
+          latency: typeof data.latencyMs === 'number' ? data.latencyMs : undefined, 
+          nodeId: asText(data.coreNodeId),
+          provider: asText(data.metadata?.provider),
+          model: asText(data.metadata?.model),
+          interactionId: interactionIdFromCore
         }
       }]);
     } catch (err: any) {
@@ -514,7 +551,7 @@ export default function NeuralKonsole() {
       {/* Messages Feed */}
       <div 
         ref={messagesContainerRef}
-        className="h-[320px] p-4 overflow-y-auto text-xs leading-relaxed flex flex-col gap-4 scrollbar-thin scrollbar-thumb-slate-700"
+        className="h-[320px] max-h-[320px] min-h-0 shrink-0 p-4 overflow-y-auto text-xs leading-relaxed flex flex-col gap-4 scrollbar-thin scrollbar-thumb-slate-700"
       >
         {messages.map(msg => (
           <div key={msg.id} className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
