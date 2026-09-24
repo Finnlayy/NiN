@@ -1,0 +1,14 @@
+{
+  "framework": "vite",
+  "buildCommand": "vite build",
+  "outputDirectory": "dist",
+  "functions": {
+    "api/task.ts": {
+      "maxDuration": 60,
+      "includeFiles": "prompts/system/**"
+    },
+    "api/ai/[...path].ts": {
+      "maxDuration": 30
+    }
+  }
+}
