@@ -8,7 +8,7 @@ import {
   FileLearningStoreProvider,
   createLearningController,
 } from '../src/index';
-import { HttpRequest, HttpResponse } from '../src/types';
+import { HttpResponse } from '../src/types';
 import { KrakenOrderExecutor } from './kraken';
 import { multiProviderCore } from './multiProvider';
 import { createServer as createViteServer } from 'vite';
@@ -19,6 +19,7 @@ import {
 import { kernelEngine } from './kernel';
 import { engineTelemetryHub } from './telemetryEngine';
 import { botRegistry } from './bots';
+import { handleNeuralRequest } from './neuralRoutes';
 
 const krakenExecutor = new KrakenOrderExecutor();
 
@@ -271,61 +272,7 @@ async function startServer() {
         return;
       }
 
-      // AI Provider Management Endpoints
-      if (method === 'GET' && url === '/api/ai/providers') {
-        sendJson(res, 200, {
-          activeProvider: multiProviderCore.getActiveProviderId(),
-          providers: multiProviderCore.getProvidersInfo(),
-        });
-        return;
-      }
-
-      if (method === 'POST' && url === '/api/ai/provider/select') {
-        try {
-          const body = await readJsonBody(req);
-          if (body.providerId && typeof body.providerId === 'string') {
-            multiProviderCore.setActiveProviderId(body.providerId as any);
-            sendJson(res, 200, {
-              ok: true,
-              activeProvider: multiProviderCore.getActiveProviderId(),
-              providers: multiProviderCore.getProvidersInfo(),
-            });
-            return;
-          }
-          sendJson(res, 400, { error: 'Missing providerId' });
-        } catch (err: any) {
-          sendJson(res, 400, { error: err.message });
-        }
-        return;
-      }
-
-      if (method === 'POST' && url === '/api/ai/provider/test') {
-        try {
-          const body = await readJsonBody(req);
-          const providerId = (body.providerId || multiProviderCore.getActiveProviderId()) as any;
-          const result = await multiProviderCore.testProvider(providerId);
-          sendJson(res, 200, result);
-        } catch (err: any) {
-          sendJson(res, 500, { ok: false, message: err.message });
-        }
-        return;
-      }
-
-      if (method === 'POST' && url === '/api/ai/provider/config') {
-        try {
-          const body = await readJsonBody(req);
-          if (body.providerId === 'lm_studio' && body.config) {
-            multiProviderCore.updateLmStudioConfig(body.config as any);
-          } else if (body.providerId === 'oneprovider' && body.config) {
-            multiProviderCore.updateOneProviderConfig(body.config as any);
-          }
-          sendJson(res, 200, {
-            ok: true,
-            providers: multiProviderCore.getProvidersInfo(),
-          });
-        } catch (err: any) {
-          sendJson(res, 400, { error: err.message });
-        }
+      if (await handleNeuralRequest(req, res, handler)) {
         return;
       }
 
@@ -526,30 +473,10 @@ async function startServer() {
         return;
       }
 
-      if (method === 'POST' && url === '/api/task') {
-        try {
-          const body = await readJsonBody(req);
-          const middlewareReq: HttpRequest = {
-            body: {
-              taskDescription: typeof body.taskDescription === 'string' ? body.taskDescription : undefined,
-              isComplexWorkflow: body.isComplexWorkflow === true,
-              domainHint: body.domainHint as HttpRequest['body']['domainHint'],
-              algorithmTag: typeof body.algorithmTag === 'string' ? body.algorithmTag : undefined,
-              politenessTier: body.politenessTier as HttpRequest['body']['politenessTier'],
-              previousInteractionId: typeof body.previousInteractionId === 'string' ? body.previousInteractionId : undefined,
-            },
-          };
-
-          await handler(middlewareReq, toMiddlewareResponse(res), (err) => {
-            if (err) {
-              const message = err instanceof Error ? err.message : 'Unknown error';
-              sendJson(res, 500, { error: message });
-            }
-          });
-        } catch (error) {
-          const message = error instanceof Error ? error.message : 'Invalid JSON body';
-          sendJson(res, 400, { error: message });
-        }
+      // API paths must stay JSON. Falling through to the SPA shell makes
+      // clients throw "Unexpected token '<'" on `<!DOCTYPE html>`.
+      if (url === '/api' || url.startsWith('/api/')) {
+        sendJson(res, 404, { error: `Unknown API route: ${method} ${url}` });
         return;
       }
 

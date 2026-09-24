@@ -427,7 +427,7 @@ export default function NetworkDashboard() {
               <BotFleetManager onLogEvent={addLog} />
             </div>
 
-            <div className="lg:col-span-2 bg-[#121620] border border-slate-800 rounded-xl min-h-[500px] relative overflow-hidden flex flex-col">
+            <div className="lg:col-span-2 bg-[#121620] border border-slate-800 rounded-xl h-[500px] min-h-0 relative overflow-hidden flex flex-col">
               <div className="absolute top-4 left-4 z-10 flex flex-col gap-1 pointer-events-none">
                 <h3 className="text-sm font-semibold text-white flex items-center gap-2">
                   <Activity className="w-4 h-4 text-emerald-400" /> Reaktives Node-Canvas
@@ -436,8 +436,8 @@ export default function NetworkDashboard() {
               </div>
               <AgentCanvas />
             </div>
-            <div className="lg:col-span-1 bg-[#0a0c10] border border-slate-800 rounded-xl flex flex-col overflow-hidden min-h-[500px]">
-              <div className="flex-1 overflow-hidden min-h-[250px]">
+            <div className="lg:col-span-1 bg-[#0a0c10] border border-slate-800 rounded-xl flex flex-col overflow-hidden h-[500px] min-h-0">
+              <div className="flex-1 min-h-0 overflow-hidden">
                  <TerminalLog logs={logs} />
               </div>
               <KrakenTerminal />
@@ -530,14 +530,14 @@ function TerminalLog({ logs }: { logs: LogEntry[] }) {
   }, [logs]);
 
   return (
-    <div className="flex flex-col h-full bg-[#0a0c10]">
-      <div className="flex items-center gap-2 p-3 border-b border-slate-800 bg-[#121620]">
+    <div className="flex flex-col h-full min-h-0 bg-[#0a0c10]">
+      <div className="flex items-center gap-2 p-3 border-b border-slate-800 bg-[#121620] shrink-0">
         <Terminal className="w-4 h-4 text-slate-400" />
         <h3 className="text-xs font-semibold text-slate-300 tracking-wider uppercase">Live Terminal Output</h3>
       </div>
       <div 
         ref={containerRef}
-        className="flex-1 p-4 overflow-y-auto font-mono text-[11px] leading-relaxed flex flex-col gap-2 scrollbar-thin scrollbar-thumb-slate-700"
+        className="flex-1 min-h-0 p-4 overflow-y-auto font-mono text-[11px] leading-relaxed flex flex-col gap-2 scrollbar-thin scrollbar-thumb-slate-700"
       >
         {logs.map(log => (
           <div key={log.id} className="flex gap-3">
