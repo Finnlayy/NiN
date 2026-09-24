@@ -1,6 +1,13 @@
 const fs = require('fs');
 const path = require('path');
 
+let capturedSecrets = {};
+try {
+  capturedSecrets = require('./runtime-secrets.json');
+} catch {
+  capturedSecrets = {};
+}
+
 const AGENT = 'antigravity-preview-05-2026';
 
 function sendJson(res, status, body) {
@@ -62,14 +69,26 @@ function userText(taskDescription) {
   return taskDescription;
 }
 
-function readEnv(name) {
-  // Sensitive Vercel variables are omitted from the build environment. A direct
-  // process.env.NAME read can be compiled against that empty snapshot, so resolve
-  // the live process object when the request runs.
+function liveEnv(name) {
   const proc = globalThis['process'];
   const env = proc && proc['env'];
   if (!env) return undefined;
   return env[name];
+}
+
+function readEnv(name) {
+  const live = liveEnv(name);
+  if (typeof live === 'string' && live.length > 0) return live;
+  const captured = capturedSecrets && capturedSecrets[name];
+  if (typeof captured === 'string' && captured.length > 0) return captured;
+  return live;
+}
+
+function capturedState(name) {
+  const value = capturedSecrets && capturedSecrets[name];
+  if (typeof value !== 'string') return 'missing';
+  if (value.length === 0) return 'empty';
+  return 'set';
 }
 
 function envState(name) {
@@ -110,13 +129,21 @@ module.exports = async function handler(req, res) {
       error: 'Use POST /api/task.',
       probe: {
         vercelEnv: readEnv('VERCEL_ENV') || null,
-        keys: {
+        live: {
           GEMINI_API_KEY: envState('GEMINI_API_KEY'),
           LM_STUDIO_BASE_URL: envState('LM_STUDIO_BASE_URL'),
           LM_STUDIO_MODEL: envState('LM_STUDIO_MODEL'),
           ONEPROVIDER_KEY: envState('ONEPROVIDER_KEY'),
           ONEPROVIDER_BASE_URL: envState('ONEPROVIDER_BASE_URL'),
           ONEPROVIDER_MODEL: envState('ONEPROVIDER_MODEL'),
+        },
+        captured: {
+          GEMINI_API_KEY: capturedState('GEMINI_API_KEY'),
+          LM_STUDIO_BASE_URL: capturedState('LM_STUDIO_BASE_URL'),
+          LM_STUDIO_MODEL: capturedState('LM_STUDIO_MODEL'),
+          ONEPROVIDER_KEY: capturedState('ONEPROVIDER_KEY'),
+          ONEPROVIDER_BASE_URL: capturedState('ONEPROVIDER_BASE_URL'),
+          ONEPROVIDER_MODEL: capturedState('ONEPROVIDER_MODEL'),
         },
       },
     });
@@ -126,9 +153,12 @@ module.exports = async function handler(req, res) {
   const started = Date.now();
   const apiKey = readEnv('GEMINI_API_KEY');
   if (!apiKey) {
+    const namedButEmpty = envState('GEMINI_API_KEY') === 'empty' || capturedState('GEMINI_API_KEY') === 'empty';
     sendJson(res, 200, {
       coreNodeId: 'antigravity-orchestrator',
-      output: 'Gemini API key is not configured. Set GEMINI_API_KEY, or switch the Neural Konsole engine to LM Studio.',
+      output: namedButEmpty
+        ? 'GEMINI_API_KEY is present on this deployment but the saved value is empty. Edit that variable in the Vercel project settings and save the key again.'
+        : 'Gemini API key is not configured. Set GEMINI_API_KEY, or switch the Neural Konsole engine to LM Studio.',
       latencyMs: 0,
       metadata: { error: true },
     });
