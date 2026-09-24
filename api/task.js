@@ -62,6 +62,15 @@ function userText(taskDescription) {
   return taskDescription;
 }
 
+function readEnv(name) {
+  return process.env[name];
+}
+
+function envPresent(name) {
+  const value = readEnv(name);
+  return typeof value === 'string' && value.length > 0;
+}
+
 function outputText(interaction) {
   let text = '';
   for (const step of interaction.steps || []) {
@@ -87,12 +96,25 @@ async function waitForInteraction(ai, interaction) {
 
 module.exports = async function handler(req, res) {
   if (req.method !== 'POST') {
-    sendJson(res, 405, { error: 'Use POST /api/task.' });
+    sendJson(res, 405, {
+      error: 'Use POST /api/task.',
+      probe: {
+        vercelEnv: readEnv('VERCEL_ENV') || null,
+        keys: {
+          GEMINI_API_KEY: envPresent('GEMINI_API_KEY'),
+          LM_STUDIO_BASE_URL: envPresent('LM_STUDIO_BASE_URL'),
+          LM_STUDIO_MODEL: envPresent('LM_STUDIO_MODEL'),
+          ONEPROVIDER_KEY: envPresent('ONEPROVIDER_KEY'),
+          ONEPROVIDER_BASE_URL: envPresent('ONEPROVIDER_BASE_URL'),
+          ONEPROVIDER_MODEL: envPresent('ONEPROVIDER_MODEL'),
+        },
+      },
+    });
     return;
   }
 
   const started = Date.now();
-  const apiKey = process.env.GEMINI_API_KEY;
+  const apiKey = readEnv('GEMINI_API_KEY');
   if (!apiKey) {
     sendJson(res, 200, {
       coreNodeId: 'antigravity-orchestrator',
