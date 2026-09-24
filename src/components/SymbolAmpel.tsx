@@ -15,6 +15,8 @@ import {
   getEcosystemMetaRotation,
   calculateLeaderAmpelState
 } from '../utils/omegaLogic';
+import { useMarketFeed } from '../market/useMarketFeed';
+import { leaderPricesFromQuotes } from '../market/krakenLive';
 
 interface SymbolAmpelProps {
   onLogEvent?: (message: string, level: 'info' | 'warn' | 'error' | 'success', node?: string) => void;
@@ -25,8 +27,18 @@ type ClusterFilter = 'ALL' | 'SUI' | 'SOL' | 'BTC' | 'ETH';
 type LampFilter = 'ALL' | SymbolLampState;
 
 export default function SymbolAmpel({ onLogEvent, className = '' }: SymbolAmpelProps) {
-  // Canonical live market leaders state
-  const [leaders, setLeaders] = useState<EcosystemLeader[]>(() => getEcosystemMetaRotation());
+  const market = useMarketFeed();
+  const liveLeaders = useCallback(() => {
+    const prices = leaderPricesFromQuotes(market.feed?.quotes ?? {});
+    return getEcosystemMetaRotation(prices);
+  }, [market.feed]);
+  const [leaders, setLeaders] = useState<EcosystemLeader[]>([]);
+
+  useEffect(() => {
+    const next = liveLeaders();
+    if (next.length === 0) return;
+    setLeaders(next);
+  }, [liveLeaders]);
   const [selectedLeader, setSelectedLeader] = useState<EcosystemLeader | null>(null);
   const [clusterFilter, setClusterFilter] = useState<ClusterFilter>('ALL');
   const [lampFilter, setLampFilter] = useState<LampFilter>('ALL');
@@ -111,9 +123,7 @@ export default function SymbolAmpel({ onLogEvent, className = '' }: SymbolAmpelP
           const cosPhiDelta = (Math.random() - 0.48) * 0.02;
           const newCosPhi = Math.max(-0.4, Math.min(0.99, Number((leader.cosPhi + cosPhiDelta).toFixed(2))));
 
-          const priceDeltaPercent = (Math.random() - 0.49) * 0.003;
-          const basePrice = leader.priceUSD || 100;
-          const newPrice = Number((basePrice * (1 + priceDeltaPercent)).toFixed(basePrice > 100 ? 1 : 3));
+          const newPrice = leader.priceUSD;
 
           // Calculate normalized metaScore according to OMEGA Blueprint §8
           const w1 = 0.25, w2 = 0.25, w3 = 0.25, w4 = 0.25;
@@ -153,7 +163,7 @@ export default function SymbolAmpel({ onLogEvent, className = '' }: SymbolAmpelP
 
     switch (scenario) {
       case 'SUI_BREAKOUT':
-        updated = getEcosystemMetaRotation().map(l => {
+        updated = liveLeaders().map(l => {
           if (l.symbol === 'SUI') {
             return {
               ...l,
@@ -176,7 +186,7 @@ export default function SymbolAmpel({ onLogEvent, className = '' }: SymbolAmpelP
         break;
 
       case 'SOL_DOMINANCE':
-        updated = getEcosystemMetaRotation().map(l => {
+        updated = liveLeaders().map(l => {
           if (l.symbol === 'SOL') {
             return {
               ...l,
@@ -200,7 +210,7 @@ export default function SymbolAmpel({ onLogEvent, className = '' }: SymbolAmpelP
         break;
 
       case 'MACRO_RISK_OFF':
-        updated = getEcosystemMetaRotation().map(l => {
+        updated = liveLeaders().map(l => {
           if (l.symbol === 'BTC') {
             return {
               ...l,
@@ -225,7 +235,7 @@ export default function SymbolAmpel({ onLogEvent, className = '' }: SymbolAmpelP
         break;
 
       case 'VIA_NEGATIVA_SHOCK':
-        updated = getEcosystemMetaRotation().map(l => {
+        updated = liveLeaders().map(l => {
           if (l.symbol === 'XRP' || l.symbol === 'DOGE') {
             return {
               ...l,
@@ -252,7 +262,7 @@ export default function SymbolAmpel({ onLogEvent, className = '' }: SymbolAmpelP
 
       case 'CANONICAL':
       default:
-        updated = getEcosystemMetaRotation();
+        updated = liveLeaders();
         onLogEvent?.("Szenario zurückgesetzt auf kanonische OMEGA-Blueprint Baseline", "info", "AMPEL_KERNEL");
         break;
     }
@@ -401,7 +411,9 @@ export default function SymbolAmpel({ onLogEvent, className = '' }: SymbolAmpelP
                 L4/L5 KANONISCH
               </span>
               <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
-                Leader: ★ {primaryLeader.symbol} ({primaryLeader.lampState})
+                {primaryLeader
+                  ? `Leader: ★ ${primaryLeader.symbol} (${primaryLeader.lampState})`
+                  : 'Keine Kraken-Quote'}
               </span>
               <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-slate-800 text-slate-300 border border-slate-700" title={`Letzte Rotation um ${lastRotationTimestamp}`}>
                 300s Puffer (Letzte: {lastRotationTimestamp})
@@ -578,6 +590,10 @@ export default function SymbolAmpel({ onLogEvent, className = '' }: SymbolAmpelP
         </div>
       </div>
 
+      {leaders.length === 0 && (
+        <p className="text-sm text-slate-400 font-mono" role="status">Keine Kraken-Quote. Die Ampel bleibt leer, bis Lastkurse vorliegen.</p>
+      )}
+
       {/* Main Grid: Market Leaders Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
         {filteredLeaders.map(leader => {
@@ -718,8 +734,15 @@ export default function SymbolAmpel({ onLogEvent, className = '' }: SymbolAmpelP
 
       {/* ── TRADING BOT STATS POPUP TEMPLATE (MIT INTEGRIERTEM AMPELSYSTEM) ── */}
       {inspectorOpen && selectedLeader && (() => {
-        const curPrice = selectedLeader.priceUSD || (selectedLeader.symbol === 'BTC' ? 64200 : selectedLeader.symbol === 'ETH' ? 2450 : selectedLeader.symbol === 'SOL' ? 142 : 41.25);
-        const changePct = selectedLeader.change24h !== undefined ? selectedLeader.change24h : 5.2;
+        const curPrice = selectedLeader.priceUSD;
+        const changePct = selectedLeader.change24h ?? 0;
+        if (!(typeof curPrice === 'number' && curPrice > 0)) {
+          return (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70" role="status">
+              <p className="text-sm text-slate-300 font-mono">Keine Kraken-Quote für {selectedLeader.symbol}.</p>
+            </div>
+          );
+        }
         const isProfit = changePct >= 0 && selectedLeader.lampState !== 'RED_GLOW';
         
         // Asset tier specific realistic investment calculation

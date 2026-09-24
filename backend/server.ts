@@ -8,19 +8,48 @@ import {
   FileLearningStoreProvider,
   createLearningController,
 } from '../src/index';
-import { HttpRequest, HttpResponse } from '../src/types';
+import { HttpResponse } from '../src/types';
 import { KrakenOrderExecutor } from './kraken';
 import { multiProviderCore } from './multiProvider';
 import { createServer as createViteServer } from 'vite';
 import { 
-  getLiveOmegaTelemetry, 
   verifyOmegaAxioms
 } from '../src/utils/omegaLogic';
+import {
+  buildPublicFeed,
+  computeGravity,
+  leaderPricesFromQuotes,
+  loadPairQuote,
+  telemetryFromComputation,
+  type GravitySummary,
+  type KrakenPrivateStatus,
+} from '../src/market/krakenLive';
+import { fanoutIntel } from './intelFanout';
 import { kernelEngine } from './kernel';
 import { engineTelemetryHub } from './telemetryEngine';
 import { botRegistry } from './bots';
+import { handleNeuralRequest } from './neuralRoutes';
 
 const krakenExecutor = new KrakenOrderExecutor();
+
+function privateStatus(connected: boolean): KrakenPrivateStatus {
+  return {
+    connected,
+    balances: null,
+    openOrders: null,
+    tradeHistory: null,
+  };
+}
+
+async function liveTelemetry() {
+  const feed = await buildPublicFeed(privateStatus(krakenExecutor.isConnected()));
+  const symbol = feed.catalog.find((row) => row.display === 'BTC/USD');
+  if (!symbol) return null;
+  const quote = await loadPairQuote(symbol, feed.quotes[symbol.pair]);
+  const computation = quote ? computeGravity(quote) : null;
+  if (computation) fanoutIntel([computation.summary], krakenExecutor);
+  return telemetryFromComputation(computation, leaderPricesFromQuotes(feed.quotes), null);
+}
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
   const payload = JSON.stringify(body);
@@ -271,74 +300,42 @@ async function startServer() {
         return;
       }
 
-      // AI Provider Management Endpoints
-      if (method === 'GET' && url === '/api/ai/providers') {
-        sendJson(res, 200, {
-          activeProvider: multiProviderCore.getActiveProviderId(),
-          providers: multiProviderCore.getProvidersInfo(),
-        });
+      if (await handleNeuralRequest(req, res, handler)) {
         return;
       }
 
-      if (method === 'POST' && url === '/api/ai/provider/select') {
-        try {
-          const body = await readJsonBody(req);
-          if (body.providerId && typeof body.providerId === 'string') {
-            multiProviderCore.setActiveProviderId(body.providerId as any);
-            sendJson(res, 200, {
-              ok: true,
-              activeProvider: multiProviderCore.getActiveProviderId(),
-              providers: multiProviderCore.getProvidersInfo(),
-            });
-            return;
-          }
-          sendJson(res, 400, { error: 'Missing providerId' });
-        } catch (err: any) {
-          sendJson(res, 400, { error: err.message });
-        }
+      if (method === 'GET' && url === '/api/market/feed') {
+        const feed = await buildPublicFeed(privateStatus(krakenExecutor.isConnected()));
+        sendJson(res, 200, feed);
         return;
       }
 
-      if (method === 'POST' && url === '/api/ai/provider/test') {
-        try {
-          const body = await readJsonBody(req);
-          const providerId = (body.providerId || multiProviderCore.getActiveProviderId()) as any;
-          const result = await multiProviderCore.testProvider(providerId);
-          sendJson(res, 200, result);
-        } catch (err: any) {
-          sendJson(res, 500, { ok: false, message: err.message });
-        }
-        return;
-      }
-
-      if (method === 'POST' && url === '/api/ai/provider/config') {
-        try {
-          const body = await readJsonBody(req);
-          if (body.providerId === 'lm_studio' && body.config) {
-            multiProviderCore.updateLmStudioConfig(body.config as any);
-          } else if (body.providerId === 'oneprovider' && body.config) {
-            multiProviderCore.updateOneProviderConfig(body.config as any);
-          }
-          sendJson(res, 200, {
-            ok: true,
-            providers: multiProviderCore.getProvidersInfo(),
-          });
-        } catch (err: any) {
-          sendJson(res, 400, { error: err.message });
-        }
+      if (method === 'POST' && url === '/api/market/intel') {
+        const body = await readJsonBody(req);
+        const snapshots = Array.isArray(body.snapshots) ? body.snapshots as GravitySummary[] : [];
+        fanoutIntel(snapshots, krakenExecutor);
+        sendJson(res, 200, { accepted: snapshots.length });
         return;
       }
 
       if (method === 'GET' && url === '/api/omega/telemetry') {
-        const data = getLiveOmegaTelemetry();
-        sendJson(res, 200, data);
+        const telemetry = await liveTelemetry();
+        if (!telemetry) {
+          sendJson(res, 503, { error: 'Kraken-Quote fehlt. Telemetrie bleibt leer.' });
+          return;
+        }
+        sendJson(res, 200, telemetry);
         return;
       }
 
       if (method === 'POST' && url === '/api/omega/validate-axioms') {
         try {
           const body = await readJsonBody(req);
-          const telemetry = getLiveOmegaTelemetry();
+          const telemetry = await liveTelemetry();
+          if (!telemetry) {
+            sendJson(res, 503, { error: 'Kraken-Quote fehlt. Axiom-Prüfung bleibt leer.' });
+            return;
+          }
           const targetPrice = Number(body.targetPrice || telemetry.viaNegativa.spotPrice);
           const exchangeStopLossPrice = body.exchangeStopLossPrice ? Number(body.exchangeStopLossPrice) : undefined;
           const direction = body.direction === 'SHORT' ? 'SHORT' : 'LONG';
@@ -526,30 +523,10 @@ async function startServer() {
         return;
       }
 
-      if (method === 'POST' && url === '/api/task') {
-        try {
-          const body = await readJsonBody(req);
-          const middlewareReq: HttpRequest = {
-            body: {
-              taskDescription: typeof body.taskDescription === 'string' ? body.taskDescription : undefined,
-              isComplexWorkflow: body.isComplexWorkflow === true,
-              domainHint: body.domainHint as HttpRequest['body']['domainHint'],
-              algorithmTag: typeof body.algorithmTag === 'string' ? body.algorithmTag : undefined,
-              politenessTier: body.politenessTier as HttpRequest['body']['politenessTier'],
-              previousInteractionId: typeof body.previousInteractionId === 'string' ? body.previousInteractionId : undefined,
-            },
-          };
-
-          await handler(middlewareReq, toMiddlewareResponse(res), (err) => {
-            if (err) {
-              const message = err instanceof Error ? err.message : 'Unknown error';
-              sendJson(res, 500, { error: message });
-            }
-          });
-        } catch (error) {
-          const message = error instanceof Error ? error.message : 'Invalid JSON body';
-          sendJson(res, 400, { error: message });
-        }
+      // API paths must stay JSON. Falling through to the SPA shell makes
+      // clients throw "Unexpected token '<'" on `<!DOCTYPE html>`.
+      if (url === '/api' || url.startsWith('/api/')) {
+        sendJson(res, 404, { error: `Unknown API route: ${method} ${url}` });
         return;
       }
 

@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   X,
   Bot as BotIcon,
   AlertCircle
 } from 'lucide-react';
+import { useMarketFeed } from '../market/useMarketFeed';
 import { TradingBot } from '../types';
 
 interface CreateBotModalProps {
@@ -13,14 +14,25 @@ interface CreateBotModalProps {
 }
 
 const PRESET_PAIRS = [
-  { pair: 'HYPE/USDT.P', venue: 'Pionex Futures', defaultPrice: 42.50, defaultRange: [39, 46], defaultLev: 75 },
-  { pair: 'BTC/USD.P', venue: 'Kraken Pro Perpetual', defaultPrice: 64800, defaultRange: [61000, 69000], defaultLev: 10 },
-  { pair: 'SOL/USD.P', venue: 'Kraken Pro Futures', defaultPrice: 142.50, defaultRange: [128, 158], defaultLev: 20 },
-  { pair: 'ETH/USD.P', venue: 'Kraken Pro Perpetual', defaultPrice: 3450, defaultRange: [3200, 3750], defaultLev: 15 },
-  { pair: 'SUI/USDT.P', venue: 'Pionex Futures', defaultPrice: 1.95, defaultRange: [1.70, 2.20], defaultLev: 50 },
+  { pair: 'HYPE/USDT.P', venue: 'Pionex Futures', band: 0.08, defaultLev: 75 },
+  { pair: 'BTC/USD.P', venue: 'Kraken Pro Perpetual', band: 0.06, defaultLev: 10 },
+  { pair: 'SOL/USD.P', venue: 'Kraken Pro Futures', band: 0.10, defaultLev: 20 },
+  { pair: 'ETH/USD.P', venue: 'Kraken Pro Perpetual', band: 0.08, defaultLev: 15 },
+  { pair: 'SUI/USDT.P', venue: 'Pionex Futures', band: 0.12, defaultLev: 50 },
 ];
 
+function formatLast(last: number): string {
+  if (last >= 1000) return last.toLocaleString(undefined, { maximumFractionDigits: 1 });
+  if (last >= 1) return last.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return last.toLocaleString(undefined, { minimumFractionDigits: 4, maximumFractionDigits: 4 });
+}
+
+function rangeDigits(last: number): number {
+  return last >= 1 ? 2 : 4;
+}
+
 export default function CreateBotModal({ isOpen, onClose, onCreateBot }: CreateBotModalProps) {
+  const market = useMarketFeed();
   const [name, setName] = useState('DCA Bot Beta');
   const [venue, setVenue] = useState('Pionex Futures');
   const [pair, setPair] = useState('HYPE/USDT.P');
@@ -28,22 +40,31 @@ export default function CreateBotModal({ isOpen, onClose, onCreateBot }: CreateB
   const [strategy, setStrategy] = useState('PERPETUAL FUTURES · DCA STRATEGY');
   const [leverage, setLeverage] = useState<number>(75);
   const [investmentUsd, setInvestmentUsd] = useState<number>(50.0);
-  const [entryPrice, setEntryPrice] = useState<number>(42.50);
-  const [dcaRangeMin, setDcaRangeMin] = useState<number>(39);
-  const [dcaRangeMax, setDcaRangeMax] = useState<number>(46);
+  const [dcaRangeMin, setDcaRangeMin] = useState<number | ''>('');
+  const [dcaRangeMax, setDcaRangeMax] = useState<number | ''>('');
   const [dcaLevels, setDcaLevels] = useState<number>(160);
+  const [rangeEdited, setRangeEdited] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  const quote = market.quoteFor(pair);
+  const last = quote && quote.last > 0 ? quote.last : null;
+
+  useEffect(() => {
+    if (!(last != null && last > 0) || rangeEdited) return;
+    const band = PRESET_PAIRS.find((preset) => preset.pair === pair.trim().toUpperCase())?.band ?? 0.08;
+    const digits = rangeDigits(last);
+    setDcaRangeMin(Number((last * (1 - band)).toFixed(digits)));
+    setDcaRangeMax(Number((last * (1 + band)).toFixed(digits)));
+  }, [last, pair, rangeEdited]);
 
   if (!isOpen) return null;
 
   const handleSelectPreset = (preset: typeof PRESET_PAIRS[0]) => {
     setPair(preset.pair);
     setVenue(preset.venue);
-    setEntryPrice(preset.defaultPrice);
-    setDcaRangeMin(preset.defaultRange[0]);
-    setDcaRangeMax(preset.defaultRange[1]);
     setLeverage(preset.defaultLev);
+    setRangeEdited(false);
     setName(`${preset.pair.split('/')[0]} DCA Specialist`);
   };
 
@@ -57,7 +78,11 @@ export default function CreateBotModal({ isOpen, onClose, onCreateBot }: CreateB
       setErrorMsg('Investment muss größer als 0 sein.');
       return;
     }
-    if (dcaRangeMin >= dcaRangeMax) {
+    if (!(last != null && last > 0)) {
+      setErrorMsg('Kraken-Quote fehlt. Der Einstieg folgt dem Lastkurs.');
+      return;
+    }
+    if (dcaRangeMin === '' || dcaRangeMax === '' || dcaRangeMin >= dcaRangeMax) {
       setErrorMsg('DCA Min Range muss kleiner als Max Range sein.');
       return;
     }
@@ -73,8 +98,8 @@ export default function CreateBotModal({ isOpen, onClose, onCreateBot }: CreateB
         strategy,
         leverage,
         investmentUsd,
-        entryPrice,
-        currentPrice: entryPrice,
+        entryPrice: last,
+        currentPrice: last,
         dcaRangeMin,
         dcaRangeMax,
         dcaLevels,
@@ -188,7 +213,10 @@ export default function CreateBotModal({ isOpen, onClose, onCreateBot }: CreateB
               <input
                 type="text"
                 value={pair}
-                onChange={(e) => setPair(e.target.value)}
+                onChange={(e) => {
+                  setPair(e.target.value);
+                  setRangeEdited(false);
+                }}
                 required
                 className="w-full px-3 py-2 bg-[#080c14] border border-slate-700/80 rounded-xl text-sm text-white focus:outline-none focus:border-purple-500 font-mono uppercase"
                 placeholder="HYPE/USDT.P"
@@ -283,21 +311,24 @@ export default function CreateBotModal({ isOpen, onClose, onCreateBot }: CreateB
             </div>
 
             <div>
-              <label className="text-xs font-medium text-slate-300 block mb-1">
-                Einstiegspreis (USD)
+              <label className="text-xs font-medium text-slate-300 block mb-1" htmlFor="bot-entry-last">
+                Einstiegspreis (Kraken Last)
               </label>
-              <div className="relative">
+              <div
+                id="bot-entry-last"
+                className="w-full pl-7 pr-3 py-2 bg-[#080c14] border border-slate-700/80 rounded-xl text-sm text-white font-mono relative"
+                role="status"
+              >
                 <span className="absolute left-3 top-2.5 text-slate-500 font-mono text-sm">$</span>
-                <input
-                  type="number"
-                  step="any"
-                  value={entryPrice}
-                  onChange={(e) => setEntryPrice(Number(e.target.value))}
-                  required
-                  min={0.0001}
-                  className="w-full pl-7 pr-3 py-2 bg-[#080c14] border border-slate-700/80 rounded-xl text-sm text-white font-mono focus:outline-none focus:border-purple-500"
-                />
+                {market.feed == null ? '…' : last != null ? formatLast(last) : '—'}
               </div>
+              <p className="mt-1 text-[10px] font-mono text-slate-500">
+                {market.feed == null
+                  ? 'Kraken-Katalog wird geladen.'
+                  : last != null
+                    ? 'Kommt vom Kraken-Lastkurs.'
+                    : 'Kraken-Quote fehlt. Für dieses Paar gibt es keinen Lastkurs.'}
+              </p>
             </div>
           </div>
 
@@ -311,7 +342,10 @@ export default function CreateBotModal({ isOpen, onClose, onCreateBot }: CreateB
                 type="number"
                 step="any"
                 value={dcaRangeMin}
-                onChange={(e) => setDcaRangeMin(Number(e.target.value))}
+                onChange={(e) => {
+                  setRangeEdited(true);
+                  setDcaRangeMin(e.target.value === '' ? '' : Number(e.target.value));
+                }}
                 required
                 className="w-full px-3 py-2 bg-[#080c14] border border-slate-700/80 rounded-xl text-sm text-white font-mono focus:outline-none focus:border-purple-500"
               />
@@ -325,7 +359,10 @@ export default function CreateBotModal({ isOpen, onClose, onCreateBot }: CreateB
                 type="number"
                 step="any"
                 value={dcaRangeMax}
-                onChange={(e) => setDcaRangeMax(Number(e.target.value))}
+                onChange={(e) => {
+                  setRangeEdited(true);
+                  setDcaRangeMax(e.target.value === '' ? '' : Number(e.target.value));
+                }}
                 required
                 className="w-full px-3 py-2 bg-[#080c14] border border-slate-700/80 rounded-xl text-sm text-white font-mono focus:outline-none focus:border-purple-500"
               />
@@ -358,7 +395,7 @@ export default function CreateBotModal({ isOpen, onClose, onCreateBot }: CreateB
             </button>
             <button
               type="submit"
-              disabled={isSubmitting}
+              disabled={isSubmitting || market.feed == null || last == null}
               className="px-5 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white rounded-xl text-xs font-bold transition-all shadow-lg shadow-purple-600/20 flex items-center gap-2 disabled:opacity-50"
             >
               <BotIcon className="w-4 h-4" />

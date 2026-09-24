@@ -15,10 +15,10 @@ import {
   X
 } from 'lucide-react';
 import { 
-  getLiveOmegaTelemetry, 
   verifyOmegaAxioms, 
   AxiomVerificationResult
 } from '../utils/omegaLogic';
+import { useMarketFeed } from '../market/useMarketFeed';
 
 interface OmegaCockpitProps {
   isOpen: boolean;
@@ -27,31 +27,25 @@ interface OmegaCockpitProps {
 }
 
 export default function OmegaCockpit({ isOpen, onClose, onLogEvent }: OmegaCockpitProps) {
-  const [telemetry, setTelemetry] = useState(getLiveOmegaTelemetry());
+  const market = useMarketFeed();
+  const telemetry = market.telemetry;
   const [autonomyLevel, setAutonomyLevel] = useState<'L4_HITL' | 'L5_AUTONOMOUS'>('L4_HITL');
   const [activeTab, setActiveTab] = useState<'OVERVIEW' | 'AXIOMS' | 'QUANTUM' | 'ROTATION' | 'VAULT'>('OVERVIEW');
   const [clusterExitDone, setClusterExitDone] = useState(false);
-  const [evalPrice, setEvalPrice] = useState('64250');
+  const [evalPrice, setEvalPrice] = useState('');
   const [evalDirection, setEvalDirection] = useState<'LONG' | 'SHORT'>('LONG');
-  const [evalStopPrice, setEvalStopPrice] = useState('63850');
+  const [evalStopPrice, setEvalStopPrice] = useState('');
   const [axiomReport, setAxiomReport] = useState<AxiomVerificationResult[]>([]);
 
-  // Periodic telemetry refresh
   useEffect(() => {
-    const timer = setInterval(() => {
-      setTelemetry(() => {
-        const fresh = getLiveOmegaTelemetry();
-        // Keep basket state synced if cluster exit was triggered
-        if (clusterExitDone) {
-          fresh.basket.totalVolume = 0;
-          fresh.basket.clusterExitTriggered = true;
-          fresh.basket.unrealizedPnL = 0;
-        }
-        return fresh;
-      });
-    }, 4000);
-    return () => clearInterval(timer);
-  }, [clusterExitDone]);
+    if (!telemetry) return;
+    setEvalPrice((prev) => (prev === '' ? String(telemetry.viaNegativa.spotPrice) : prev));
+    setEvalStopPrice((prev) => (
+      prev === ''
+        ? String(Number((telemetry.viaNegativa.spotPrice - telemetry.viaNegativa.atr14 * 1.2).toFixed(2)))
+        : prev
+    ));
+  }, [telemetry]);
 
   // Initial axiom verification
   useEffect(() => {
@@ -59,8 +53,10 @@ export default function OmegaCockpit({ isOpen, onClose, onLogEvent }: OmegaCockp
   }, [evalPrice, evalDirection, evalStopPrice]);
 
   const runAxiomCheck = useCallback(() => {
-    const targetPrice = parseFloat(evalPrice) || 64280;
-    const stopPrice = parseFloat(evalStopPrice) || 63850;
+    if (!telemetry) return;
+    const targetPrice = parseFloat(evalPrice);
+    const stopPrice = parseFloat(evalStopPrice);
+    if (!Number.isFinite(targetPrice)) return;
 
     const report = verifyOmegaAxioms(
       {
@@ -80,26 +76,11 @@ export default function OmegaCockpit({ isOpen, onClose, onLogEvent }: OmegaCockp
   }, [evalPrice, evalDirection, evalStopPrice, telemetry]);
 
   const handleClusterExit = () => {
+    if (!telemetry) return;
     setClusterExitDone(true);
-    setTelemetry(prev => ({
-      ...prev,
-      basket: {
-        ...prev.basket,
-        totalVolume: 0,
-        clusterExitTriggered: true,
-        clusterExitReason: 'Batched Cluster-Exit triggered manually -> 100% Cash Ground State',
-        unrealizedPnL: 0,
-        freeRollRiskUSD: 0.00
-      },
-      vault: {
-        ...prev.vault,
-        vaultState: 'STATE_A_AUTO_EARN'
-      }
-    }));
-
     onLogEvent?.(
-      "Axiom 3: Batched Cluster-Exit executed. All tranches closed at market. System in Ground State (100% Cash).", 
-      "success", 
+      "Axiom 3: Batched Cluster-Exit executed. All tranches closed at market. System in Ground State (100% Cash).",
+      "success",
       "The Judge (M8)"
     );
   };
@@ -122,11 +103,19 @@ export default function OmegaCockpit({ isOpen, onClose, onLogEvent }: OmegaCockp
       "info",
       "Quantum Core"
     );
-    setTelemetry(getLiveOmegaTelemetry());
+    void market.calculate();
     runAxiomCheck();
   };
 
   if (!isOpen) return null;
+
+  if (!telemetry) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80" role="status">
+        <p className="text-sm text-slate-300 font-mono">Kraken-Quote fehlt. Das Cockpit bleibt leer, bis ein Lastkurs vorliegt.</p>
+      </div>
+    );
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 md:p-8 bg-black/80 backdrop-blur-md overflow-y-auto">

@@ -24,6 +24,7 @@ interface GravitationTelemetryGraphProps {
   gravityField?: GravityFieldState;
   viaNegativa?: ViaNegativaState;
   spotPrice?: number;
+  visibleL2Depth?: number;
   onLogEvent?: (message: string, level: 'info' | 'warn' | 'error' | 'success', node?: string) => void;
   className?: string;
 }
@@ -40,7 +41,8 @@ interface TimeSeriesDataPoint {
 export default function GravitationTelemetryGraph({
   gravityField,
   viaNegativa,
-  spotPrice = 64280,
+  spotPrice,
+  visibleL2Depth,
   onLogEvent,
   className = ''
 }: GravitationTelemetryGraphProps) {
@@ -55,10 +57,10 @@ export default function GravitationTelemetryGraph({
   const [showNet, setShowNet] = useState(true);
 
   // Simulation Sliders
-  const [l2Depth, setL2Depth] = useState(1450);
+  const [l2Depth, setL2Depth] = useState(visibleL2Depth && visibleL2Depth > 0 ? visibleL2Depth : 0);
   const [icebergDepth, setIcebergDepth] = useState(2200);
   const [polyProb, setPolyProb] = useState(0.78);
-  const [currentSpot, setCurrentSpot] = useState(spotPrice);
+  const [currentSpot, setCurrentSpot] = useState(spotPrice ?? 0);
 
   // Interactive Hover State
   const [hoveredPoint, setHoveredPoint] = useState<GravityForceCurvePoint | null>(null);
@@ -70,7 +72,7 @@ export default function GravitationTelemetryGraph({
     const now = Date.now();
     for (let i = 24; i >= 0; i--) {
       const t = now - i * 1500;
-      const forces = calculateGravitationForces(spotPrice, 1450, 2200, 0.78);
+      const forces = calculateGravitationForces(spotPrice ?? 0, visibleL2Depth);
       const jitter = Math.sin(i * 0.4) * 4;
       initial.push({
         timeLabel: new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
@@ -105,7 +107,7 @@ export default function GravitationTelemetryGraph({
       setIcebergDepth(prev => Math.max(800, Math.min(4500, Math.round(prev + driftBlind))));
       setPolyProb(prev => Math.max(0.2, Math.min(0.98, Number((prev + driftPoly).toFixed(3)))));
 
-      const forces = calculateGravitationForces(currentSpot, l2Depth, icebergDepth, polyProb);
+      const forces = calculateGravitationForces(currentSpot, l2Depth);
       const now = Date.now();
 
       setTimeSeries(prev => {
@@ -127,12 +129,12 @@ export default function GravitationTelemetryGraph({
 
   // Current Instantaneous Vector
   const vectorTelemetry: GravityForceVectorTelemetry = useMemo(() => {
-    return calculateGravitationForces(currentSpot, l2Depth, icebergDepth, polyProb);
+    return calculateGravitationForces(currentSpot, l2Depth);
   }, [currentSpot, l2Depth, icebergDepth, polyProb]);
 
   // Profile curve points across price spectrum
   const profilePoints: GravityForceCurvePoint[] = useMemo(() => {
-    return generateGravitationForceProfile(currentSpot, l2Depth, icebergDepth, polyProb, 2000, 60);
+    return generateGravitationForceProfile(currentSpot, l2Depth, undefined, undefined, Math.max(currentSpot * 0.02, 1), 60);
   }, [currentSpot, l2Depth, icebergDepth, polyProb]);
 
   // Dimensions for SVG Graphs
@@ -144,8 +146,9 @@ export default function GravitationTelemetryGraph({
   const plotHeight = height - 2 * padY;
 
   // Coordinate scales for Profile Mode F(P)
-  const minPrice = currentSpot - 2000;
-  const maxPrice = currentSpot + 2000;
+  const priceSpan = Math.max(currentSpot * 0.02, 1);
+  const minPrice = currentSpot - priceSpan;
+  const maxPrice = currentSpot + priceSpan;
   const maxAbsForce = 120; // -120N to +120N
 
   const scaleXProfile = useCallback((p: number) => {
@@ -200,8 +203,9 @@ export default function GravitationTelemetryGraph({
   }, [timeSeries, scaleXStream, scaleYForce]);
 
   // Via Negativa Bounds
-  const bLower = viaNegativa?.bLower ?? currentSpot - 1650;
-  const bUpper = viaNegativa?.bUpper ?? currentSpot + 1650;
+  const hasBands = viaNegativa != null;
+  const bLower = viaNegativa?.bLower ?? currentSpot;
+  const bUpper = viaNegativa?.bUpper ?? currentSpot;
 
   // Handle interactive SVG hover
   const handleMouseMove = (e: React.MouseEvent<SVGSVGElement>) => {
@@ -233,14 +237,21 @@ export default function GravitationTelemetryGraph({
   };
 
   const resetToLive = () => {
-    setL2Depth(1450);
-    setIcebergDepth(2200);
-    setPolyProb(0.78);
-    setCurrentSpot(spotPrice);
+    if (visibleL2Depth && visibleL2Depth > 0) setL2Depth(visibleL2Depth);
+    if (typeof spotPrice === 'number') setCurrentSpot(spotPrice);
     if (onLogEvent) {
       onLogEvent("Reset Gravitation Field parameters to live exchange baseline.", 'success', 'Gravitation Telemetry');
     }
   };
+
+  if (!(typeof spotPrice === 'number' && spotPrice > 0)) {
+    return (
+      <div className={`glass-card rounded-2xl p-6 border border-slate-700 text-slate-300 ${className}`} role="status">
+        <h2 className="text-base font-bold text-white font-mono">Gravitations-Telemetrie</h2>
+        <p className="text-sm text-slate-400 mt-2">Kraken-Quote fehlt. Der Kraftverlauf bleibt leer, bis ein Lastkurs vorliegt.</p>
+      </div>
+    );
+  }
 
   return (
     <div className={`glass-card rounded-2xl p-6 shadow-2xl border border-slate-700/60 text-slate-200 relative overflow-hidden ${className}`}>
@@ -314,7 +325,8 @@ export default function GravitationTelemetryGraph({
           <button
             onClick={resetToLive}
             title="Auf Kraken L2 Live-Werte zurücksetzen"
-            className="p-1.5 rounded-lg bg-slate-800/80 hover:bg-slate-700 border border-slate-700 text-slate-300 transition-colors"
+            aria-label="Auf Kraken L2 Live-Werte zurücksetzen"
+            className="p-1.5 rounded-lg bg-slate-800/80 hover:bg-slate-700 border border-slate-700 text-slate-300 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
           >
             <RotateCcw className="w-4 h-4" />
           </button>
@@ -562,6 +574,8 @@ export default function GravitationTelemetryGraph({
           {/* PROFILE MODE RENDERING */}
           {graphMode === 'PROFILE' && (
             <>
+              {hasBands && (
+              <>
               {/* Forbidden Via Negativa Zones */}
               {scaleXProfile(bLower) > padX && (
                 <rect
@@ -608,6 +622,8 @@ export default function GravitationTelemetryGraph({
               <text x={scaleXProfile(bUpper) + 4} y={padY + 12} fill="#f43f5e" fontSize="8" textAnchor="start" fontFamily="monospace">
                 B_upper (${bUpper})
               </text>
+              </>
+              )}
 
               {/* Attractor P* Equilibrium line (where F_net crosses 0) */}
               <line

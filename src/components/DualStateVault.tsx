@@ -20,6 +20,7 @@ export interface DualStateVaultProps {
   className?: string;
   initialTotalAUM?: number;
   initialLeverage?: number;
+  liveEquityUSD?: number | null;
 }
 
 export type VaultStateMode = 'STATE_A_AUTO_EARN' | 'STATE_B_FLASH_TWAP';
@@ -41,9 +42,11 @@ export default function DualStateVault({
   className = '',
   initialTotalAUM = 100000.0,
   initialLeverage = 8.5,
+  liveEquityUSD,
 }: DualStateVaultProps) {
   // AUM and Allocation State
-  const [totalAUM, setTotalAUM] = useState<number>(initialTotalAUM);
+  const balanceKnown = typeof liveEquityUSD === 'number';
+  const [totalAUM, setTotalAUM] = useState<number>(balanceKnown ? liveEquityUSD : liveEquityUSD === null ? 0 : initialTotalAUM);
   const [currency, setCurrency] = useState<CurrencyUnit>('USD');
   const [dynamicLeverage, setDynamicLeverage] = useState<number>(initialLeverage);
   const [vaultState, setVaultState] = useState<VaultStateMode>('STATE_A_AUTO_EARN');
@@ -254,6 +257,12 @@ export default function DualStateVault({
       {/* Background Quantum Gradient Glows */}
       <div className="absolute -top-24 -left-24 w-96 h-96 bg-cyan-500/10 rounded-full blur-3xl pointer-events-none" />
       <div className="absolute -bottom-24 -right-24 w-96 h-96 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none" />
+
+      {liveEquityUSD === null && (
+        <p className="relative z-10 mb-4 text-xs font-mono text-amber-300" role="status">
+          Keine Kraken-Balance verbunden. Equity wird nicht als Kontostand angezeigt.
+        </p>
+      )}
 
       {/* Header with Title and Currency Toggle */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-6 border-b border-white/5 relative z-10">

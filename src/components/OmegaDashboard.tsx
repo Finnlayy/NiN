@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 import {
   Atom,
   Zap,
@@ -10,9 +10,7 @@ import {
   Flame,
   Brain
 } from 'lucide-react';
-import {
-  getLiveOmegaTelemetry
-} from '../utils/omegaLogic';
+import { useMarketFeed } from '../market/useMarketFeed';
 import GravitationFieldVisualizer from './omega/GravitationFieldVisualizer';
 import PipelineStageIndicators from './omega/PipelineStageIndicators';
 import SymbolAmpelMatrix from './omega/SymbolAmpelMatrix';
@@ -38,43 +36,15 @@ export type OmegaTabType =
   | 'AXIOMS_GATE';
 
 export default function OmegaDashboard({ onLogEvent, className = '' }: OmegaDashboardProps) {
-  const [telemetry, setTelemetry] = useState(getLiveOmegaTelemetry());
+  const market = useMarketFeed();
+  const telemetry = market.telemetry;
   const [autonomyLevel, setAutonomyLevel] = useState<'L4_HITL' | 'L5_AUTONOMOUS'>('L4_HITL');
   const [activeTab, setActiveTab] = useState<OmegaTabType>('PILLARS_ALL');
   const [clusterExitTriggered, setClusterExitTriggered] = useState(false);
   const [activePipelineStep, setActivePipelineStep] = useState(5);
 
-  // Periodic live telemetry simulation
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setTelemetry(() => {
-        const fresh = getLiveOmegaTelemetry();
-        if (clusterExitTriggered) {
-          fresh.basket.totalVolume = 0;
-          fresh.basket.unrealizedPnL = 0;
-          fresh.basket.clusterExitTriggered = true;
-          fresh.basket.freeRollRiskUSD = 0;
-        }
-        return fresh;
-      });
-    }, 3500);
-
-    return () => clearInterval(interval);
-  }, [clusterExitTriggered]);
-
   const handleClusterExit = useCallback(() => {
     setClusterExitTriggered(true);
-    setTelemetry(prev => ({
-      ...prev,
-      basket: {
-        ...prev.basket,
-        totalVolume: 0,
-        unrealizedPnL: 0,
-        clusterExitTriggered: true,
-        clusterExitReason: 'Batched Cluster-Exit triggered -> 100% Cash Ground State',
-        freeRollRiskUSD: 0
-      }
-    }));
     onLogEvent?.(
       "Axiom 3 Triggered: Batched Cluster-Exit executed atomically. All tranches closed at market. System in 100% Cash Ground State.",
       "success",
@@ -95,13 +65,22 @@ export default function OmegaDashboard({ onLogEvent, className = '' }: OmegaDash
   }, [autonomyLevel, onLogEvent]);
 
   const handleRecalibrateQuantum = useCallback(() => {
-    setTelemetry(getLiveOmegaTelemetry());
+    void market.calculate();
     onLogEvent?.(
       "Quantum state recalculated: Hilbert phase angles, 3-component potentials, and Via Negativa bounds refreshed.",
       "info",
       "Quantum Core"
     );
-  }, [onLogEvent]);
+  }, [market, onLogEvent]);
+
+  if (!telemetry) {
+    return (
+      <div className={`w-full text-slate-300 p-8 ${className}`} role="status">
+        <h1 className="text-lg font-bold text-white font-mono">OMEGA</h1>
+        <p className="text-sm text-slate-400 mt-2">Kraken-Quote fehlt. Die Übersicht bleibt leer, bis ein Lastkurs vorliegt.</p>
+      </div>
+    );
+  }
 
   return (
     <div className={`w-full min-h-screen text-slate-200 p-4 md:p-8 grid-pattern ${className}`}>
@@ -446,7 +425,7 @@ export default function OmegaDashboard({ onLogEvent, className = '' }: OmegaDash
 
             {/* Pillar 10: Dual-State Vault (90/10 Split) Full Component */}
             <div className="md:col-span-2">
-              <DualStateVault onLogEvent={onLogEvent} />
+              <DualStateVault onLogEvent={onLogEvent} liveEquityUSD={null} />
             </div>
           </div>
 
@@ -637,7 +616,7 @@ export default function OmegaDashboard({ onLogEvent, className = '' }: OmegaDash
 
       {/* TAB: §10 DUAL-STATE VAULT */}
       {activeTab === 'DUAL_STATE_VAULT' && (
-        <DualStateVault onLogEvent={onLogEvent} />
+        <DualStateVault onLogEvent={onLogEvent} liveEquityUSD={null} />
       )}
 
       {/* TAB 4: ANTI-MARTINGALE */}

@@ -18,7 +18,7 @@ import {
   Target
 } from 'lucide-react';
 import {
-  getLiveOmegaTelemetry,
+  type LiveOmegaTelemetry,
   verifyOmegaAxioms,
   calculateViaNegativa,
   calculateViaNegativaAnalysis,
@@ -26,6 +26,7 @@ import {
   AxiomVerificationResult,
   ViaNegativaState,
 } from '../utils/omegaLogic';
+import { useMarketFeed } from '../market/useMarketFeed';
 
 export interface SystemAxiomMonitorProps {
   onLogEvent?: (message: string, level: 'info' | 'warn' | 'error' | 'success', node?: string) => void;
@@ -43,13 +44,18 @@ export interface AxiomAlertItem {
 
 export default function SystemAxiomMonitor({ onLogEvent, className = '' }: SystemAxiomMonitorProps) {
   // Live Telemetry Baseline
-  const [telemetry, setTelemetry] = useState(() => getLiveOmegaTelemetry());
+  const market = useMarketFeed();
+  const [telemetry, setTelemetry] = useState<LiveOmegaTelemetry | null>(market.telemetry);
+
+  useEffect(() => {
+    if (market.telemetry) setTelemetry(market.telemetry);
+  }, [market.telemetry]);
 
   // Interactive Candidate Order State
   const [symbol, setSymbol] = useState<'BTC/USD' | 'SOL/USD' | 'SUI/USD' | 'ETH/USD'>('BTC/USD');
-  const [targetPrice, setTargetPrice] = useState<number>(64280.50);
+  const [targetPrice, setTargetPrice] = useState<number>(0);
   const [direction, setDirection] = useState<'LONG' | 'SHORT'>('LONG');
-  const [exchangeStopLoss, setExchangeStopLoss] = useState<number>(63850);
+  const [exchangeStopLoss, setExchangeStopLoss] = useState<number>(0);
   const [timeDeltaMinutes, setTimeDeltaMinutes] = useState<number>(60);
   const [activeTab, setActiveTab] = useState<'OVERVIEW' | 'VIA_NEGATIVA' | 'AXIOM_DEEP_DIVE' | 'STRESS_TEST'>('OVERVIEW');
   const [audioAlertsEnabled, setAudioAlertsEnabled] = useState<boolean>(false);
@@ -86,17 +92,28 @@ export default function SystemAxiomMonitor({ onLogEvent, className = '' }: Syste
   ]);
 
   // Asset price presets
-  const assetSpecs: Record<string, { basePrice: number; atr: number }> = useMemo(() => ({
-    'BTC/USD': { basePrice: 64280.50, atr: 420 },
-    'SOL/USD': { basePrice: 182.40, atr: 5.80 },
-    'SUI/USD': { basePrice: 3.42, atr: 0.18 },
-    'ETH/USD': { basePrice: 2780.00, atr: 38.5 },
-  }), []);
+  const assetSpecs: Record<string, { basePrice: number; atr: number } | null> = useMemo(() => {
+    const build = (display: string) => {
+      const quote = market.quoteFor(display);
+      if (!quote || !(quote.last > 0) || !(quote.atr14 && quote.atr14 > 0)) return null;
+      return { basePrice: quote.last, atr: quote.atr14 };
+    };
+    return {
+      'BTC/USD': build('BTC/USD'),
+      'SOL/USD': build('SOL/USD'),
+      'SUI/USD': build('SUI/USD'),
+      'ETH/USD': build('ETH/USD'),
+    };
+  }, [market.feed, market.computation]);
 
   // Update target price when symbol changes
   const handleSymbolChange = (newSymbol: 'BTC/USD' | 'SOL/USD' | 'SUI/USD' | 'ETH/USD') => {
     setSymbol(newSymbol);
     const spec = assetSpecs[newSymbol];
+    if (!spec) {
+      onLogEvent?.(`Keine Kraken-Quote für ${newSymbol}.`, 'warn', 'SystemAxiomMonitor');
+      return;
+    }
     setTargetPrice(spec.basePrice);
     setExchangeStopLoss(Number((spec.basePrice - spec.atr * 1.2).toFixed(2)));
     onLogEvent?.(`Symbol gewechselt zu ${newSymbol}. Spotpreis: $${spec.basePrice}`, 'info', 'SystemAxiomMonitor');
@@ -104,7 +121,10 @@ export default function SystemAxiomMonitor({ onLogEvent, className = '' }: Syste
 
   // Recompute live viaNegativa state based on selected asset, timeframe, impedance
   const liveViaNegativa: ViaNegativaState = useMemo(() => {
-    const spec = assetSpecs[symbol] || assetSpecs['BTC/USD'];
+    const spec = assetSpecs[symbol] ?? assetSpecs['BTC/USD'];
+    if (!spec) {
+      return calculateViaNegativa(0, 0, timeDeltaMinutes, customAskImpedance, customBidSupport);
+    }
     return calculateViaNegativa(
       spec.basePrice,
       spec.atr,
@@ -121,6 +141,7 @@ export default function SystemAxiomMonitor({ onLogEvent, className = '' }: Syste
 
   // Evaluate the 6 Axioms
   const axiomResults: AxiomVerificationResult[] = useMemo(() => {
+    if (!telemetry) return [];
     return verifyOmegaAxioms(
       {
         symbol,
@@ -216,27 +237,26 @@ export default function SystemAxiomMonitor({ onLogEvent, className = '' }: Syste
 
   // Periodic heartbeat / state sync
   useEffect(() => {
-    const timer = setInterval(() => {
-      setTelemetry(prev => {
-        const fresh = getLiveOmegaTelemetry();
-        return {
-          ...fresh,
-          basket: prev.basket, // preserve interactive basket modifications
-        };
-      });
-    }, 4000);
-    return () => clearInterval(timer);
-  }, []);
+    const spec = assetSpecs[symbol];
+    if (!spec || targetPrice > 0) return;
+    setTargetPrice(spec.basePrice);
+    setExchangeStopLoss(Number((spec.basePrice - spec.atr * 1.2).toFixed(2)));
+  }, [assetSpecs, symbol, targetPrice]);
+
+  const updateTelemetry = (recipe: (current: LiveOmegaTelemetry) => LiveOmegaTelemetry) => {
+    setTelemetry((prev) => (prev ? recipe(prev) : prev));
+  };
 
   // Preset Scenario Handlers
   const applyScenario = (type: 'CANONICAL' | 'UPPER_BREACH' | 'LOWER_BREACH' | 'COUNTER_GRAVITY' | 'MISSING_STOP' | 'DESTRUCTIVE_AC' | 'GROUND_STATE') => {
     const spec = assetSpecs[symbol];
+    if (!spec) return;
     switch (type) {
       case 'CANONICAL':
         setTargetPrice(spec.basePrice);
         setDirection('LONG');
         setExchangeStopLoss(Number((spec.basePrice - spec.atr * 1.2).toFixed(2)));
-        setTelemetry(prev => ({
+        updateTelemetry(prev => ({
           ...prev,
           gravityField: {
             ...prev.gravityField,
@@ -273,7 +293,7 @@ export default function SystemAxiomMonitor({ onLogEvent, className = '' }: Syste
       case 'COUNTER_GRAVITY':
         setTargetPrice(spec.basePrice);
         setDirection('SHORT'); // opposed to positive gravity force
-        setTelemetry(prev => ({
+        updateTelemetry(prev => ({
           ...prev,
           gravityField: {
             ...prev.gravityField,
@@ -294,7 +314,7 @@ export default function SystemAxiomMonitor({ onLogEvent, className = '' }: Syste
 
       case 'DESTRUCTIVE_AC':
         setTargetPrice(spec.basePrice);
-        setTelemetry(prev => ({
+        updateTelemetry(prev => ({
           ...prev,
           acSystem: {
             ...prev.acSystem,
@@ -309,7 +329,7 @@ export default function SystemAxiomMonitor({ onLogEvent, className = '' }: Syste
 
       case 'GROUND_STATE':
         setTargetPrice(spec.basePrice);
-        setTelemetry(prev => ({
+        updateTelemetry(prev => ({
           ...prev,
           basket: {
             ...prev.basket,
@@ -323,12 +343,17 @@ export default function SystemAxiomMonitor({ onLogEvent, className = '' }: Syste
         playAcousticAlert(false);
         onLogEvent?.('Szenario: Axiom 3 Ground State erzwungen! 100% Cash-Protection.', 'success', 'The Judge');
         break;
+      default: {
+        const unreachable: never = type;
+        return unreachable;
+      }
     }
   };
 
   // Remediation Helpers
   const handleSnapToSafeCenter = () => {
     const spec = assetSpecs[symbol];
+    if (!spec) return;
     setTargetPrice(spec.basePrice);
     onLogEvent?.(`Zielpreis zentriert auf $${spec.basePrice} (Safe Zone Zentrum).`, 'success', 'The Judge');
     playAcousticAlert(false);
@@ -336,6 +361,7 @@ export default function SystemAxiomMonitor({ onLogEvent, className = '' }: Syste
 
   const handleApplyOptimalOCOStop = () => {
     const spec = assetSpecs[symbol];
+    if (!spec) return;
     const optimalStop = direction === 'LONG'
       ? Number((targetPrice - spec.atr * 1.1).toFixed(2))
       : Number((targetPrice + spec.atr * 1.1).toFixed(2));
@@ -345,6 +371,7 @@ export default function SystemAxiomMonitor({ onLogEvent, className = '' }: Syste
   };
 
   const handleAlignWithGravity = () => {
+    if (!telemetry) return;
     const correctDir = telemetry.gravityField.gravityForce >= 0 ? 'LONG' : 'SHORT';
     setDirection(correctDir);
     onLogEvent?.(`Richtung an Gravitationskraft angepasst: ${correctDir} (Axiom 2 erfüllt).`, 'success', 'The Judge');
@@ -352,7 +379,7 @@ export default function SystemAxiomMonitor({ onLogEvent, className = '' }: Syste
   };
 
   const handleTriggerClusterExit = () => {
-    setTelemetry(prev => ({
+    updateTelemetry(prev => ({
       ...prev,
       basket: {
         ...prev.basket,
@@ -371,7 +398,7 @@ export default function SystemAxiomMonitor({ onLogEvent, className = '' }: Syste
     handleSnapToSafeCenter();
     handleApplyOptimalOCOStop();
     handleAlignWithGravity();
-    setTelemetry(prev => ({
+    updateTelemetry(prev => ({
       ...prev,
       acSystem: {
         ...prev.acSystem,
@@ -413,9 +440,18 @@ export default function SystemAxiomMonitor({ onLogEvent, className = '' }: Syste
       bUpperPct: toPct(liveViaNegativa.bUpper),
       spotPct: toPct(liveViaNegativa.spotPrice),
       targetPct: toPct(targetPrice),
-      potentialMinPct: toPct(telemetry.gravityField.potentialMinimumPrice),
+      potentialMinPct: toPct(telemetry?.gravityField.potentialMinimumPrice ?? liveViaNegativa.spotPrice),
     };
-  }, [liveViaNegativa, targetPrice, telemetry.gravityField.potentialMinimumPrice]);
+  }, [liveViaNegativa, targetPrice, telemetry]);
+
+  if (!telemetry) {
+    return (
+      <div className={`rounded-2xl border border-slate-700 p-6 text-slate-300 ${className}`} role="status">
+        <h2 className="text-base font-bold text-white font-mono">Axiom-Monitor</h2>
+        <p className="text-sm text-slate-400 mt-2">Kraken-Quote fehlt. Die Axiom-Prüfung bleibt leer, bis ein Lastkurs vorliegt.</p>
+      </div>
+    );
+  }
 
   return (
     <div className={`space-y-6 ${className}`}>

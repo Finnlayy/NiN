@@ -2,14 +2,37 @@ import { useState, useMemo } from 'react';
 import { Database, Image as ImageIcon, Search, ChevronRight, Maximize2, X, Terminal } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import TradingViewChart from './TradingViewChart';
-import { generateOHLCData } from '../utils/mockData';
+import type { Time } from 'lightweight-charts';
 
-const MOCK_PHOTOS = [
-  { id: 1, title: 'Wyckoff Accumulation Schema', category: 'Pattern Recognition', url: 'https://images.unsplash.com/photo-1611974789855-9c2a0a7236a3?q=80&w=800&auto=format&fit=crop', timestamp: '2023-11-12T08:45:00Z', confidence: 0.94 },
-  { id: 2, title: 'Order Block Imbalance (L3)', category: 'Liquidity Analysis', url: 'https://images.unsplash.com/photo-1642543492481-44e81e3914a7?q=80&w=800&auto=format&fit=crop', timestamp: '2023-11-14T12:30:00Z', confidence: 0.89 },
-  { id: 3, title: 'Volume Profile Anomaly', category: 'Volume Metrics', url: 'https://images.unsplash.com/photo-1590283603385-18ff38584151?q=80&w=800&auto=format&fit=crop', timestamp: '2023-11-15T16:15:00Z', confidence: 0.97 },
-  { id: 4, title: 'Market Structure Break', category: 'Trend Analysis', url: 'https://images.unsplash.com/photo-1526628953301-3e589a6a8b74?q=80&w=800&auto=format&fit=crop', timestamp: '2023-11-16T09:20:00Z', confidence: 0.91 },
-];
+const HOUR_MS = 60 * 60 * 1000;
+
+function ingestedHoursAgo(hoursAgo: number): string {
+  return new Date(Date.now() - hoursAgo * HOUR_MS).toISOString();
+}
+
+const VISION_ASSETS = [
+  { id: 1, title: 'Wyckoff Accumulation Schema', category: 'Pattern Recognition', url: 'https://images.unsplash.com/photo-1611974789855-9c2a0a7236a3?q=80&w=800&auto=format&fit=crop', hoursAgo: 6, confidence: 0.94 },
+  { id: 2, title: 'Order Block Imbalance (L3)', category: 'Liquidity Analysis', url: 'https://images.unsplash.com/photo-1642543492481-44e81e3914a7?q=80&w=800&auto=format&fit=crop', hoursAgo: 30, confidence: 0.89 },
+  { id: 3, title: 'Volume Profile Anomaly', category: 'Volume Metrics', url: 'https://images.unsplash.com/photo-1590283603385-18ff38584151?q=80&w=800&auto=format&fit=crop', hoursAgo: 54, confidence: 0.97 },
+  { id: 4, title: 'Market Structure Break', category: 'Trend Analysis', url: 'https://images.unsplash.com/photo-1526628953301-3e589a6a8b74?q=80&w=800&auto=format&fit=crop', hoursAgo: 78, confidence: 0.91 },
+] as const;
+
+type VisionAsset = {
+  id: number;
+  title: string;
+  category: string;
+  url: string;
+  timestamp: string;
+  confidence: number;
+};
+
+interface KnowledgeOhlcBar {
+  time: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+}
 
 interface KnowledgeLibProps {
   isAnalyzing: boolean;
@@ -18,6 +41,7 @@ interface KnowledgeLibProps {
   onAnalyze: () => void;
   onOrchestrateOrder: () => void;
   onCloseModal: () => void;
+  ohlc?: KnowledgeOhlcBar[] | null;
 }
 
 export default function KnowledgeLib({
@@ -26,20 +50,30 @@ export default function KnowledgeLib({
   orderState,
   onAnalyze,
   onOrchestrateOrder,
-  onCloseModal
+  onCloseModal,
+  ohlc = null,
 }: KnowledgeLibProps) {
-  const [selectedPhoto, setSelectedPhoto] = useState<typeof MOCK_PHOTOS[0] | null>(null);
+  const [selectedPhoto, setSelectedPhoto] = useState<VisionAsset | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Generate stable mock data for the chart
-  const chartData = useMemo(() => generateOHLCData(120), []);
+  // Stamp ingestion times from now so the store stays current across sessions.
+  const photos = useMemo<VisionAsset[]>(
+    () =>
+      VISION_ASSETS.map(({ hoursAgo, ...asset }) => ({
+        ...asset,
+        timestamp: ingestedHoursAgo(hoursAgo),
+      })),
+    [],
+  );
+
+  const chartData = useMemo(() => ohlc ?? [], [ohlc]);
 
   const handleCloseModal = () => {
     setSelectedPhoto(null);
     onCloseModal();
   };
 
-  const filteredPhotos = MOCK_PHOTOS.filter(p => 
+  const filteredPhotos = photos.filter(p => 
     p.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
     p.category.toLowerCase().includes(searchQuery.toLowerCase())
   );
@@ -164,11 +198,15 @@ export default function KnowledgeLib({
                 </div>
               </div>
               <div className="p-1 bg-[#0a0c10] relative">
-                <TradingViewChart 
-                  data={chartData} 
-                  highlightStartIndex={chartData.length - 40} 
-                  highlightEndIndex={chartData.length - 10} 
-                />
+                {chartData.length > 0 ? (
+                  <TradingViewChart 
+                    data={chartData.map((bar) => ({ ...bar, time: bar.time as Time }))} 
+                    highlightStartIndex={Math.max(0, chartData.length - 40)} 
+                    highlightEndIndex={Math.max(0, chartData.length - 10)}
+                  />
+                ) : (
+                  <p className="text-sm text-slate-400 font-mono p-6">Keine Kraken-OHLC für BTC/USD. Der Chart bleibt leer, bis die Kerzen geladen sind.</p>
+                )}
               </div>
               <div className="p-4 bg-[#0a0c10] border-t border-slate-800 flex items-center justify-between">
                  <div className="flex gap-4 items-center">

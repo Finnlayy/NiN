@@ -1,5 +1,6 @@
 import { writeFileSync, readFileSync, existsSync } from 'fs';
 import { join } from 'path';
+import { mergeGravitySnapshots, pairsMatch, type GravitySummary } from '../src/market/krakenLive';
 
 export interface TradingBot {
   id: string;
@@ -52,6 +53,7 @@ const STORAGE_PATH = join(process.cwd(), 'data', 'bots.json');
 
 class BotRegistry {
   private bots: Map<string, TradingBot> = new Map();
+  private intel: GravitySummary[] = [];
 
   constructor() {
     this.loadBots();
@@ -237,8 +239,11 @@ class BotRegistry {
     const leverage = data.leverage || 10;
     const investmentUsd = Number(data.investmentUsd) || 100;
     const investmentEur = Number((investmentUsd * 0.92).toFixed(2));
-    const entryPrice = Number(data.entryPrice) || (data.pair.includes('BTC') ? 64500 : data.pair.includes('SOL') ? 145 : data.pair.includes('HYPE') ? 42 : 2.5);
-    const currentPrice = Number(data.currentPrice) || entryPrice;
+    const entryPrice = Number(data.entryPrice);
+    if (!(entryPrice > 0)) {
+      throw new Error('Kraken-Quote fehlt. Der Bot startet nicht ohne Lastkurs.');
+    }
+    const currentPrice = Number(data.currentPrice) > 0 ? Number(data.currentPrice) : entryPrice;
     const dcaRangeMin = Number(data.dcaRangeMin) || Number((entryPrice * 0.9).toFixed(2));
     const dcaRangeMax = Number(data.dcaRangeMax) || Number((entryPrice * 1.1).toFixed(2));
     const dcaLevels = Number(data.dcaLevels) || 50;
@@ -304,38 +309,55 @@ class BotRegistry {
     return res;
   }
 
+  private intelFor(pair: string): GravitySummary | undefined {
+    return this.intel.find((snap) => pairsMatch(snap.pair, pair) || pairsMatch(snap.display, pair));
+  }
+
+  private withLivePrice(bot: TradingBot, last: number): TradingBot {
+    const entry = bot.entryPrice;
+    const priceChange = entry > 0 ? (last - entry) / entry : 0;
+    const directionMultiplier = bot.direction === 'LONG' ? 1 : -1;
+    const unrealizedPercent = Number((priceChange * bot.leverage * directionMultiplier * 100).toFixed(2));
+    const unrealizedUsd = Number(((bot.investmentUsd * unrealizedPercent) / 100).toFixed(2));
+    const totalProfit = Number((bot.realizedProfitUsd + unrealizedUsd).toFixed(2));
+    const roi = bot.investmentUsd > 0 ? Number(((totalProfit / bot.investmentUsd) * 100).toFixed(2)) : 0;
+    return {
+      ...bot,
+      currentPrice: last,
+      unrealizedPnlUsd: unrealizedUsd,
+      unrealizedPnlPercent: unrealizedPercent,
+      totalProfitUsd: totalProfit,
+      roiPercent: roi,
+      lastUpdated: new Date().toLocaleTimeString('de-DE'),
+    };
+  }
+
+  public applyIntel(snapshots: GravitySummary[]): string[] {
+    this.intel = mergeGravitySnapshots(this.intel, snapshots);
+    const updated: string[] = [];
+    for (const bot of this.bots.values()) {
+      if (bot.status !== 'ACTIVE') continue;
+      const snap = this.intelFor(bot.pair);
+      if (!snap || !(snap.last > 0)) continue;
+      this.bots.set(bot.id, this.withLivePrice(bot, snap.last));
+      updated.push(bot.id);
+    }
+    if (updated.length > 0) this.saveBots();
+    return updated;
+  }
+
   public triggerCycle(id: string): TradingBot | null {
     const bot = this.bots.get(id);
     if (!bot || bot.status !== 'ACTIVE') return null;
 
-    // Advance 1 cycle and calculate updated PnL
-    const priceDeltaPercent = (Math.random() * 0.015 - 0.005);
-    const newPrice = Number((bot.currentPrice * (1 + priceDeltaPercent)).toFixed(bot.currentPrice > 100 ? 2 : 4));
-    const priceChange = (newPrice - bot.entryPrice) / bot.entryPrice;
-    const directionMultiplier = bot.direction === 'LONG' ? 1 : -1;
-    const unrealizedPercent = Number((priceChange * bot.leverage * directionMultiplier * 100).toFixed(2));
-    const unrealizedUsd = Number(((bot.investmentUsd * unrealizedPercent) / 100).toFixed(2));
-    
-    // Increment cycle & orders
+    const snap = this.intelFor(bot.pair);
+    const newPrice = snap?.last ?? bot.currentPrice;
+    const priced = this.withLivePrice(bot, newPrice);
     const newCycles = bot.cycles + 1;
-    const newOrders = bot.dcaOrdersTriggered + 1;
-    const incrementalRealized = unrealizedUsd > 0 ? Number((unrealizedUsd * 0.25).toFixed(2)) : 0;
-    const totalRealized = Number((bot.realizedProfitUsd + incrementalRealized).toFixed(2));
-    const totalProfit = Number((totalRealized + unrealizedUsd).toFixed(2));
-    const roi = Number(((totalProfit / bot.investmentUsd) * 100).toFixed(2));
-
     const updated: TradingBot = {
-      ...bot,
-      currentPrice: newPrice,
-      unrealizedPnlUsd: unrealizedUsd,
-      unrealizedPnlPercent: unrealizedPercent,
-      realizedProfitUsd: totalRealized,
-      dcaOrdersTriggered: newOrders,
+      ...priced,
       cycles: newCycles,
       cycleProgressPercent: (newCycles * 3) % 100,
-      totalProfitUsd: totalProfit,
-      roiPercent: roi,
-      lastUpdated: new Date().toLocaleTimeString('de-DE')
     };
 
     this.bots.set(id, updated);

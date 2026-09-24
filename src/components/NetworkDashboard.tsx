@@ -19,7 +19,8 @@ import FailureModesMatrixView from "./FailureModesMatrixView";
 import { ContinuousLearningMonitor } from "./ContinuousLearningMonitor";
 import { ArchitectTerminalMonitor } from "./ArchitectTerminalMonitor";
 import { AgentLogInspector } from "./AgentLogInspector";
-import { getLiveOmegaTelemetry } from "../utils/omegaLogic";
+import GravitySymbolBar from "./GravitySymbolBar";
+import { useMarketFeed } from "../market/useMarketFeed";
 
 export default function NetworkDashboard() {
   const [health, setHealth] = useState<any>(null);
@@ -37,14 +38,8 @@ export default function NetworkDashboard() {
   const [showSentimentSidebar, setShowSentimentSidebar] = useState(false);
   const [autoEarnActive, setAutoEarnActive] = useState(false);
   const [showOmegaCockpit, setShowOmegaCockpit] = useState(false);
-  const [omegaTelemetry, setOmegaTelemetry] = useState(getLiveOmegaTelemetry());
-
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setOmegaTelemetry(getLiveOmegaTelemetry());
-    }, 4000);
-    return () => clearInterval(timer);
-  }, []);
+  const market = useMarketFeed();
+  const omegaTelemetry = market.telemetry;
 
   const addLog = useCallback((message: string, level: LogEntry['level'], node?: string) => {
     setLogs(prev => {
@@ -290,10 +285,25 @@ export default function NetworkDashboard() {
 
       {activeView === 'GRAVITY' ? (
         <div className="mt-2 space-y-6">
+          <GravitySymbolBar
+            catalog={market.feed?.catalog ?? []}
+            selectedPair={market.selectedPair}
+            calculating={market.calculating}
+            calculatingAll={market.calculatingAll}
+            summaries={market.summaries}
+            error={market.error}
+            onSelect={(pair) => {
+              market.selectPair(pair);
+              void market.calculate(pair);
+            }}
+            onCalculate={() => { void market.calculate(); }}
+            onCalculateAll={() => { void market.calculateAll(); }}
+          />
           <GravityFieldVisualizer
-            spotPrice={omegaTelemetry.viaNegativa.spotPrice}
-            viaNegativa={omegaTelemetry.viaNegativa}
-            gravityField={omegaTelemetry.gravityField}
+            spotPrice={omegaTelemetry?.viaNegativa.spotPrice}
+            viaNegativa={omegaTelemetry?.viaNegativa}
+            gravityField={omegaTelemetry?.gravityField}
+            visibleL2Depth={market.computation?.summary.visibleL2Depth}
             onLogEvent={addLog}
           />
         </div>
@@ -344,13 +354,17 @@ export default function NetworkDashboard() {
                   </span>
                 </div>
                 <div className="flex items-center gap-4 text-xs font-mono text-slate-400 mt-1 flex-wrap">
-                  <span>Leistungsfaktor: <strong className="text-emerald-400">cos φ {omegaTelemetry.acSystem.powerFactor}</strong> ({omegaTelemetry.acSystem.regime})</span>
-                  <span>•</span>
-                  <span>Gravitation: <strong className="text-cyan-400">V_total {omegaTelemetry.gravityField.vTotal}</strong> (P* ${omegaTelemetry.gravityField.potentialMinimumPrice.toLocaleString()})</span>
-                  <span>•</span>
-                  <span>Via Negativa: <strong className="text-amber-300">Bounds [${omegaTelemetry.viaNegativa.bLower}, ${omegaTelemetry.viaNegativa.bUpper}]</strong></span>
-                  <span>•</span>
-                  <span>Anti-Martingale: <strong className="text-emerald-400">Free-Roll ($0.00 Risk)</strong></span>
+                  {omegaTelemetry ? (
+                    <>
+                      <span>Leistungsfaktor: <strong className="text-emerald-400">cos φ {omegaTelemetry.acSystem.powerFactor}</strong> ({omegaTelemetry.acSystem.regime})</span>
+                      <span>•</span>
+                      <span>Gravitation: <strong className="text-cyan-400">V_total {omegaTelemetry.gravityField.vTotal}</strong> (P* ${omegaTelemetry.gravityField.potentialMinimumPrice.toLocaleString()})</span>
+                      <span>•</span>
+                      <span>Via Negativa: <strong className="text-amber-300">Bounds [${omegaTelemetry.viaNegativa.bLower}, ${omegaTelemetry.viaNegativa.bUpper}]</strong></span>
+                    </>
+                  ) : (
+                    <span>Kraken-Quote fehlt. Telemetrie bleibt leer, bis ein Lastkurs da ist.</span>
+                  )}
                 </div>
               </div>
             </div>
@@ -388,10 +402,25 @@ export default function NetworkDashboard() {
 
           {/* §2 3-Component Gravitation Field Force Telemetry Component */}
           <div className="mb-8">
+            <GravitySymbolBar
+              catalog={market.feed?.catalog ?? []}
+              selectedPair={market.selectedPair}
+              calculating={market.calculating}
+              calculatingAll={market.calculatingAll}
+              summaries={market.summaries}
+              error={market.error}
+              onSelect={(pair) => {
+                market.selectPair(pair);
+                void market.calculate(pair);
+              }}
+              onCalculate={() => { void market.calculate(); }}
+              onCalculateAll={() => { void market.calculateAll(); }}
+            />
             <GravitationTelemetryGraph
-              gravityField={omegaTelemetry.gravityField}
-              viaNegativa={omegaTelemetry.viaNegativa}
-              spotPrice={omegaTelemetry.viaNegativa.spotPrice}
+              gravityField={omegaTelemetry?.gravityField}
+              viaNegativa={omegaTelemetry?.viaNegativa}
+              spotPrice={omegaTelemetry?.viaNegativa.spotPrice}
+              visibleL2Depth={market.computation?.summary.visibleL2Depth}
               onLogEvent={addLog}
             />
           </div>
@@ -409,7 +438,7 @@ export default function NetworkDashboard() {
 
             {/* §10 Dual-State Vault: 90/10 Capital Split & Kraken Flexible Auto-Earn */}
             <div className="lg:col-span-3">
-              <DualStateVault onLogEvent={addLog} />
+              <DualStateVault onLogEvent={addLog} liveEquityUSD={null} />
             </div>
 
             {/* §14 Omega Engine System Status: Health Metrics & 6 Axioms Status Indicators */}
@@ -427,7 +456,7 @@ export default function NetworkDashboard() {
               <BotFleetManager onLogEvent={addLog} />
             </div>
 
-            <div className="lg:col-span-2 bg-[#121620] border border-slate-800 rounded-xl min-h-[500px] relative overflow-hidden flex flex-col">
+            <div className="lg:col-span-2 bg-[#121620] border border-slate-800 rounded-xl h-[500px] min-h-0 relative overflow-hidden flex flex-col">
               <div className="absolute top-4 left-4 z-10 flex flex-col gap-1 pointer-events-none">
                 <h3 className="text-sm font-semibold text-white flex items-center gap-2">
                   <Activity className="w-4 h-4 text-emerald-400" /> Reaktives Node-Canvas
@@ -436,8 +465,8 @@ export default function NetworkDashboard() {
               </div>
               <AgentCanvas />
             </div>
-            <div className="lg:col-span-1 bg-[#0a0c10] border border-slate-800 rounded-xl flex flex-col overflow-hidden min-h-[500px]">
-              <div className="flex-1 overflow-hidden min-h-[250px]">
+            <div className="lg:col-span-1 bg-[#0a0c10] border border-slate-800 rounded-xl flex flex-col overflow-hidden h-[500px] min-h-0">
+              <div className="flex-1 min-h-0 overflow-hidden">
                  <TerminalLog logs={logs} />
               </div>
               <KrakenTerminal />
@@ -451,6 +480,7 @@ export default function NetworkDashboard() {
             onAnalyze={handleAnalyze}
             onOrchestrateOrder={handleOrchestrateOrder}
             onCloseModal={handleResetKnowledgeState}
+            ohlc={market.computation?.quote.display === 'BTC/USD' ? market.computation.quote.ohlc : market.quoteFor('BTC/USD')?.ohlc ?? null}
           />
           
           <NeuralKonsole />
@@ -530,14 +560,14 @@ function TerminalLog({ logs }: { logs: LogEntry[] }) {
   }, [logs]);
 
   return (
-    <div className="flex flex-col h-full bg-[#0a0c10]">
-      <div className="flex items-center gap-2 p-3 border-b border-slate-800 bg-[#121620]">
+    <div className="flex flex-col h-full min-h-0 bg-[#0a0c10]">
+      <div className="flex items-center gap-2 p-3 border-b border-slate-800 bg-[#121620] shrink-0">
         <Terminal className="w-4 h-4 text-slate-400" />
         <h3 className="text-xs font-semibold text-slate-300 tracking-wider uppercase">Live Terminal Output</h3>
       </div>
       <div 
         ref={containerRef}
-        className="flex-1 p-4 overflow-y-auto font-mono text-[11px] leading-relaxed flex flex-col gap-2 scrollbar-thin scrollbar-thumb-slate-700"
+        className="flex-1 min-h-0 p-4 overflow-y-auto font-mono text-[11px] leading-relaxed flex flex-col gap-2 scrollbar-thin scrollbar-thumb-slate-700"
       >
         {logs.map(log => (
           <div key={log.id} className="flex gap-3">
