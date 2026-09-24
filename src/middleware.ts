@@ -48,6 +48,7 @@ export async function processTask(
     ? new ContinuousLearningEngine({
         store: config.learning.store ?? new InMemoryLearningStore(),
         now: config.learning.now,
+        knowledgeIndex: config.learning.knowledgeIndex,
       })
     : null;
 
@@ -58,7 +59,7 @@ export async function processTask(
         domain: classification.domain,
         algorithmTag: classification.algorithmTag,
       }),
-      research: learningEngine.research(
+      research: await learningEngine.researchIndexed(
         {
           taskDescription: context.taskDescription,
           domain: classification.domain,

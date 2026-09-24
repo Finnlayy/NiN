@@ -285,7 +285,7 @@ export default function OmegaDashboard({ onLogEvent, className = '' }: OmegaDash
                   <div className="p-3 rounded-xl bg-white/[0.02] border border-white/5 flex items-center justify-between">
                     <div>
                       <span className="font-bold text-slate-200">1. Vector Store (Embeddings)</span>
-                      <span className="block text-[10px] text-slate-500">/data/knowledge_library/vector_store/</span>
+                      <span className="block text-[10px] text-slate-500">qdrant · knowledge_library</span>
                     </div>
                     <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300">
                       SYNCED
