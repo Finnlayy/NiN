@@ -1,11 +1,11 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import {
   TrendingUp,
   Search,
   Zap
 } from 'lucide-react';
 import { SymbolLampState } from '../../utils/omegaLogic';
-import { getLiveSpot } from '../../utils/liveSpot';
+import { getLiveSpot, onLiveSpotReady } from '../../utils/liveSpot';
 
 export interface EcosystemToken {
   symbol: string;
@@ -37,6 +37,11 @@ export default function SymbolAmpelMatrix({
   const [selectedLampFilter, setSelectedLampFilter] = useState<'ALL' | SymbolLampState>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
   const [inspectToken, setInspectToken] = useState<EcosystemToken | null>(null);
+
+  // Re-render once when the first live tick replaces the fallback prices,
+  // so the mount-time memo below does not freeze the simulated values.
+  const [liveSpotTick, setLiveSpotTick] = useState(0);
+  useEffect(() => onLiveSpotReady(() => setLiveSpotTick(t => t + 1)), []);
 
   // Canonical token list based on OMEGA-BLUEPRINT §8
   const tokens: EcosystemToken[] = useMemo(() => [
@@ -232,7 +237,7 @@ export default function SymbolAmpelMatrix({
       change24h: -5.1,
       tradeStatus: 'EMBARGO_BLOCKED',
     },
-  ], []);
+  ], [liveSpotTick]);
 
   // Filtered tokens
   const filteredTokens = useMemo(() => {

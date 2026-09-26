@@ -26,7 +26,7 @@ import {
   AxiomVerificationResult,
   ViaNegativaState,
 } from '../utils/omegaLogic';
-import { getLiveSpot } from '../utils/liveSpot';
+import { getLiveSpot, onLiveSpotReady } from '../utils/liveSpot';
 
 export interface SystemAxiomMonitorProps {
   onLogEvent?: (message: string, level: 'info' | 'warn' | 'error' | 'success', node?: string) => void;
@@ -57,6 +57,11 @@ export default function SystemAxiomMonitor({ onLogEvent, className = '' }: Syste
   const [activeAlertFilter, setActiveAlertFilter] = useState<'ALL' | 'CRITICAL' | 'WARNING'>('ALL');
   const [customAskImpedance, setCustomAskImpedance] = useState<number>(30);
   const [customBidSupport, setCustomBidSupport] = useState<number>(30);
+
+  // Re-render once when the first live tick replaces the fallback prices,
+  // so mount-time memos/state below do not freeze the simulated values.
+  const [liveSpotTick, setLiveSpotTick] = useState(0);
+  useEffect(() => onLiveSpotReady(() => setLiveSpotTick(t => t + 1)), []);
 
   // Live alerts log
   const [alerts, setAlerts] = useState<AxiomAlertItem[]>(() => [
@@ -92,7 +97,17 @@ export default function SystemAxiomMonitor({ onLogEvent, className = '' }: Syste
     'SOL/USD': { basePrice: getLiveSpot('SOL', 182.40), atr: 5.80 },
     'SUI/USD': { basePrice: 3.42, atr: 0.18 },
     'ETH/USD': { basePrice: 2780.00, atr: 38.5 },
-  }), []);
+  }), [liveSpotTick]);
+
+  // Sync the candidate-order fields with the freshly arrived live price
+  // (mirrors handleSymbolChange, runs only on the first live tick).
+  useEffect(() => {
+    if (liveSpotTick === 0) return;
+    const spec = assetSpecs[symbol];
+    if (!spec) return;
+    setTargetPrice(spec.basePrice);
+    setExchangeStopLoss(Number((spec.basePrice - spec.atr * 1.2).toFixed(2)));
+  }, [liveSpotTick]);
 
   // Update target price when symbol changes
   const handleSymbolChange = (newSymbol: 'BTC/USD' | 'SOL/USD' | 'SUI/USD' | 'ETH/USD') => {

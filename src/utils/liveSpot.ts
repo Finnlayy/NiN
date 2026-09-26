@@ -22,6 +22,8 @@ const REFRESH_INTERVAL_MS = 10_000;
 
 const cache: Partial<Record<LiveSymbol, number>> = {};
 let poller: ReturnType<typeof setInterval> | null = null;
+let readyFired = false;
+const readyListeners: Array<() => void> = [];
 
 async function refresh(): Promise<void> {
   try {
@@ -32,6 +34,12 @@ async function refresh(): Promise<void> {
       const last = data?.ticker?.[TICKER_MAP[sym]]?.last;
       if (typeof last === 'number' && Number.isFinite(last) && last > 0) {
         cache[sym] = last;
+      }
+    }
+    if (!readyFired && (cache.BTC !== undefined || cache.SOL !== undefined)) {
+      readyFired = true;
+      for (const cb of readyListeners) {
+        try { cb(); } catch { /* listener errors must not break the poller */ }
       }
     }
   } catch {
@@ -52,4 +60,21 @@ function ensurePoller(): void {
 export function getLiveSpot(symbol: LiveSymbol, fallback?: number): number {
   ensurePoller();
   return cache[symbol] ?? fallback ?? FALLBACKS[symbol];
+}
+
+/**
+ * Registers a callback that fires exactly once, when the first live tick
+ * arrives. Use this to re-render components that cached a fallback value
+ * in a mount-time memo — e.g. `useMemo(() => ..., [])`.
+ */
+export function onLiveSpotReady(cb: () => void): () => void {
+  if (readyFired) {
+    cb();
+    return () => {};
+  }
+  readyListeners.push(cb);
+  return () => {
+    const idx = readyListeners.indexOf(cb);
+    if (idx >= 0) readyListeners.splice(idx, 1);
+  };
 }
