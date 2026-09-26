@@ -1,5 +1,6 @@
 import { writeFileSync, readFileSync, existsSync } from 'fs';
 import { join } from 'path';
+import { tmpdir } from 'os';
 
 export interface TradingBot {
   id: string;
@@ -48,7 +49,9 @@ export interface TradingBot {
   lastUpdated: string;
 }
 
-const STORAGE_PATH = join(process.cwd(), 'data', 'bots.json');
+const STORAGE_PATH = process.env.VERCEL === '1'
+  ? join(tmpdir(), 'nin-bots.json')
+  : join(process.cwd(), 'data', 'bots.json');
 
 class BotRegistry {
   private bots: Map<string, TradingBot> = new Map();

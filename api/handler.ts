@@ -18,8 +18,17 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
 export default async function handler(req: IncomingMessage, res: ServerResponse): Promise<void> {
   try {
     const { handleKrakenApi } = await import('../backend/krakenHttp');
+    const { handleVercelApi } = await import('../backend/vercelApi');
     const { KrakenOrderExecutor } = await import('../backend/kraken');
-    const handled = await handleKrakenApi(req, res, new KrakenOrderExecutor());
+    const executor = new KrakenOrderExecutor();
+
+    // Routes that only exist on the dev server get a Vercel function here:
+    // /api/health, /api/ai/*, /api/bots*, /api/worker/dca
+    if (await handleVercelApi(req, res, executor)) {
+      return;
+    }
+
+    const handled = await handleKrakenApi(req, res, executor);
     if (handled || res.headersSent) {
       return;
     }

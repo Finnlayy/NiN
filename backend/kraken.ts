@@ -477,6 +477,28 @@ export class KrakenOrderExecutor {
   }
 
   /**
+   * Last traded price for a pair via the Kraken CLI, or null when the
+   * ticker is unavailable. Used by the automatic DCA worker.
+   */
+  async getSpotPrice(pair: string): Promise<number | null> {
+    await this.ensureCli();
+    if (!this.hasNativeCli()) {
+      return null;
+    }
+    const tickerRun = await this.runCli(['ticker', pair, '-o', 'json']);
+    if (!tickerRun.ok) {
+      return null;
+    }
+    try {
+      const parsed = parseJson(tickerRun.stdout);
+      const hints = pair.includes('BTC') ? ['XXBTZUSD', 'XBTUSD', 'BTCUSD'] : [pair];
+      return priceOf(tickerQuote(parsed, hints));
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * Size a market buy from the live ticker, then send it through the CLI.
    * No order is sent when the ticker price is missing.
    */

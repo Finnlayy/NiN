@@ -95,3 +95,37 @@ jobs:
               }
               console.log('Live BTC ticker OK:',j.ticker.BTCUSD.last);
             });"
+
+          # API routes served through api/handler.ts (rewrites in vercel.json)
+          HEALTH=$(curl -fsS "$SITE/api/health")
+          echo "$HEALTH" | node -e "
+            let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{
+              const j=JSON.parse(d);
+              if(j.status!=='ok'){console.error('/api/health did not return status ok');process.exit(1);}
+              console.log('/api/health OK');
+            });"
+
+          PROVIDERS=$(curl -fsS "$SITE/api/ai/providers")
+          echo "$PROVIDERS" | node -e "
+            let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{
+              const j=JSON.parse(d);
+              if(!j.activeProvider||!Array.isArray(j.providers)||j.providers.length===0){
+                console.error('/api/ai/providers malformed');process.exit(1);
+              }
+              console.log('/api/ai/providers OK, active:',j.activeProvider);
+            });"
+
+          BOTS=$(curl -fsS "$SITE/api/bots")
+          echo "$BOTS" | node -e "
+            let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{
+              if(!Array.isArray(JSON.parse(d))){console.error('/api/bots did not return an array');process.exit(1);}
+              console.log('/api/bots OK');
+            });"
+
+          WORKER=$(curl -fsS "$SITE/api/worker/dca")
+          echo "$WORKER" | node -e "
+            let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{
+              const j=JSON.parse(d);
+              if(typeof j.ran!=='boolean'){console.error('/api/worker/dca malformed');process.exit(1);}
+              console.log('/api/worker/dca OK, ran:',j.ran,'reason:',j.reason||'-');
+            });"
