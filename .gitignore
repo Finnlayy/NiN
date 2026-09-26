@@ -7,3 +7,4 @@ data/vectors/trace.json
 .env
 .env.local
 .vercel/
+api/_build/

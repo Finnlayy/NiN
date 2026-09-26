@@ -1,12 +1,15 @@
 {
   "framework": "vite",
-  "buildCommand": "vite build",
+  "buildCommand": "vite build && npm run build:api",
   "outputDirectory": "dist",
   "functions": {
     "api/kraken/status.js": {
       "maxDuration": 60
     },
-    "api/handler.ts": {
+    "api/handler.js": {
+      "maxDuration": 60
+    },
+    "api/worker/dca.js": {
       "maxDuration": 60
     }
   },
@@ -20,7 +23,12 @@
     { "source": "/api/ai/provider/test", "destination": "/api/handler" },
     { "source": "/api/ai/provider/config", "destination": "/api/handler" },
     { "source": "/api/bots", "destination": "/api/handler" },
-    { "source": "/api/bots/:path*", "destination": "/api/handler" },
-    { "source": "/api/worker/dca", "destination": "/api/handler" }
+    { "source": "/api/bots/:path*", "destination": "/api/handler" }
+  ],
+  "crons": [
+    {
+      "path": "/api/worker/dca",
+      "schedule": "13 */4 * * *"
+    }
   ]
 }

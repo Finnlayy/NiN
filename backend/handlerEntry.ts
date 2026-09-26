@@ -1,4 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'http';
+import { handleKrakenApi } from './krakenHttp';
+import { handleVercelApi } from './vercelApi';
+import { KrakenOrderExecutor } from './kraken';
 
 export const maxDuration = 60;
 
@@ -12,14 +15,15 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
 }
 
 /**
- * Kraken routes on Vercel. Imports are inside the handler so a load
- * failure is returned as JSON instead of killing the function process.
+ * Vercel entry for the shared API function (api/handler.js is a CJS shim
+ * requiring the esbuild bundle of this file — see scripts/build-api.mjs).
+ * Bundling everything into one CJS file avoids the @vercel/node TS
+ * compilation issues that made the previous api/handler.ts crash at
+ * invocation time (the same reason api/kraken/status.js is hand-written
+ * CommonJS).
  */
 export default async function handler(req: IncomingMessage, res: ServerResponse): Promise<void> {
   try {
-    const { handleKrakenApi } = await import('../backend/krakenHttp');
-    const { handleVercelApi } = await import('../backend/vercelApi');
-    const { KrakenOrderExecutor } = await import('../backend/kraken');
     const executor = new KrakenOrderExecutor();
 
     // Routes that only exist on the dev server get a Vercel function here:
