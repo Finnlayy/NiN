@@ -5,6 +5,7 @@ import {
   Zap
 } from 'lucide-react';
 import { SymbolLampState } from '../../utils/omegaLogic';
+import { getLiveSpot } from '../../utils/liveSpot';
 
 export interface EcosystemToken {
   symbol: string;
@@ -115,7 +116,7 @@ export default function SymbolAmpelMatrix({
       metaScore: 2.68,
       lampState: 'GREEN_GLOW',
       isLeader: true,
-      priceUSD: 182.4,
+      priceUSD: getLiveSpot('SOL', 182.4),
       change24h: 8.5,
       tradeStatus: 'ACTIVE_PYRAMID',
     },
@@ -179,7 +180,7 @@ export default function SymbolAmpelMatrix({
       metaScore: 2.40,
       lampState: 'GREEN_SOLID',
       isLeader: true,
-      priceUSD: 64280.0,
+      priceUSD: getLiveSpot('BTC', 64280.0),
       change24h: 3.8,
       tradeStatus: 'ACTIVE_PYRAMID',
     },

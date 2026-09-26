@@ -19,6 +19,7 @@ import {
   GravityForceVectorTelemetry,
   GravityForceCurvePoint
 } from '../utils/omegaLogic';
+import { getLiveSpot } from '../utils/liveSpot';
 
 interface GravitationTelemetryGraphProps {
   gravityField?: GravityFieldState;
@@ -40,7 +41,7 @@ interface TimeSeriesDataPoint {
 export default function GravitationTelemetryGraph({
   gravityField,
   viaNegativa,
-  spotPrice = 64280,
+  spotPrice = getLiveSpot('BTC', 64280),
   onLogEvent,
   className = ''
 }: GravitationTelemetryGraphProps) {

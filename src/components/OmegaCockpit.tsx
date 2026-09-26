@@ -19,6 +19,7 @@ import {
   verifyOmegaAxioms, 
   AxiomVerificationResult
 } from '../utils/omegaLogic';
+import { getLiveSpot } from '../utils/liveSpot';
 
 interface OmegaCockpitProps {
   isOpen: boolean;
@@ -59,7 +60,7 @@ export default function OmegaCockpit({ isOpen, onClose, onLogEvent }: OmegaCockp
   }, [evalPrice, evalDirection, evalStopPrice]);
 
   const runAxiomCheck = useCallback(() => {
-    const targetPrice = parseFloat(evalPrice) || 64280;
+    const targetPrice = parseFloat(evalPrice) || getLiveSpot('BTC', 64280);
     const stopPrice = parseFloat(evalStopPrice) || 63850;
 
     const report = verifyOmegaAxioms(

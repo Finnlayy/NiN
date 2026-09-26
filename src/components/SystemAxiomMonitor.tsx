@@ -26,6 +26,7 @@ import {
   AxiomVerificationResult,
   ViaNegativaState,
 } from '../utils/omegaLogic';
+import { getLiveSpot } from '../utils/liveSpot';
 
 export interface SystemAxiomMonitorProps {
   onLogEvent?: (message: string, level: 'info' | 'warn' | 'error' | 'success', node?: string) => void;
@@ -47,7 +48,7 @@ export default function SystemAxiomMonitor({ onLogEvent, className = '' }: Syste
 
   // Interactive Candidate Order State
   const [symbol, setSymbol] = useState<'BTC/USD' | 'SOL/USD' | 'SUI/USD' | 'ETH/USD'>('BTC/USD');
-  const [targetPrice, setTargetPrice] = useState<number>(64280.50);
+  const [targetPrice, setTargetPrice] = useState<number>(() => getLiveSpot('BTC', 64280.50));
   const [direction, setDirection] = useState<'LONG' | 'SHORT'>('LONG');
   const [exchangeStopLoss, setExchangeStopLoss] = useState<number>(63850);
   const [timeDeltaMinutes, setTimeDeltaMinutes] = useState<number>(60);
@@ -87,8 +88,8 @@ export default function SystemAxiomMonitor({ onLogEvent, className = '' }: Syste
 
   // Asset price presets
   const assetSpecs: Record<string, { basePrice: number; atr: number }> = useMemo(() => ({
-    'BTC/USD': { basePrice: 64280.50, atr: 420 },
-    'SOL/USD': { basePrice: 182.40, atr: 5.80 },
+    'BTC/USD': { basePrice: getLiveSpot('BTC', 64280.50), atr: 420 },
+    'SOL/USD': { basePrice: getLiveSpot('SOL', 182.40), atr: 5.80 },
     'SUI/USD': { basePrice: 3.42, atr: 0.18 },
     'ETH/USD': { basePrice: 2780.00, atr: 38.5 },
   }), []);
