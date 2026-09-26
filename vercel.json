@@ -24,11 +24,5 @@
     { "source": "/api/ai/provider/config", "destination": "/api/handler" },
     { "source": "/api/bots", "destination": "/api/handler" },
     { "source": "/api/bots/:path*", "destination": "/api/handler" }
-  ],
-  "crons": [
-    {
-      "path": "/api/worker/dca",
-      "schedule": "13 */4 * * *"
-    }
   ]
 }

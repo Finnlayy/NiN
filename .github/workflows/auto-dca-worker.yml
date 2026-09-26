@@ -1,0 +1,26 @@
+name: Auto-DCA Worker
+
+# Trigger the Vercel auto-DCA worker every 4 hours (at :13 past the hour).
+# This replaces the Vercel-native cron, which requires a paid plan.
+# The worker itself is safe-by-default: it does nothing unless
+# KRAKEN_AUTO_DCA=true and Kraken API credentials are configured.
+
+on:
+  schedule:
+    - cron: "13 */4 * * *"
+  workflow_dispatch:
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger auto-DCA worker
+        run: |
+          RESPONSE=$(curl -sS -w "\nHTTP_STATUS:%{http_code}" \
+            https://ni-n.vercel.app/api/worker/dca)
+          echo "$RESPONSE"
+          STATUS=$(echo "$RESPONSE" | tail -n1 | cut -d: -f2)
+          if [ "$STATUS" -ne 200 ]; then
+            echo "Worker endpoint returned HTTP $STATUS" >&2
+            exit 1
+          fi
