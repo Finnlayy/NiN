@@ -13,6 +13,14 @@
   "rewrites": [
     { "source": "/api/kraken/dca", "destination": "/api/handler" },
     { "source": "/api/execute-kraken", "destination": "/api/handler" },
-    { "source": "/api/execute-order", "destination": "/api/handler" }
+    { "source": "/api/execute-order", "destination": "/api/handler" },
+    { "source": "/api/health", "destination": "/api/handler" },
+    { "source": "/api/ai/providers", "destination": "/api/handler" },
+    { "source": "/api/ai/provider/select", "destination": "/api/handler" },
+    { "source": "/api/ai/provider/test", "destination": "/api/handler" },
+    { "source": "/api/ai/provider/config", "destination": "/api/handler" },
+    { "source": "/api/bots", "destination": "/api/handler" },
+    { "source": "/api/bots/:path*", "destination": "/api/handler" },
+    { "source": "/api/worker/dca", "destination": "/api/handler" }
   ]
 }
