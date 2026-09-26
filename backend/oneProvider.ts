@@ -1,4 +1,5 @@
 import { NeuralCoreAdapter, WrappedPrompt, NeuralCoreResponse } from '../src/types';
+import { resolveBearerToken } from './connect';
 
 export interface OneProviderConfig {
   baseUrl: string;
@@ -19,6 +20,7 @@ export class OneProviderCoreAdapter implements NeuralCoreAdapter {
   private model: string;
   private protocol: 'anthropic-messages' | 'openai-compatible';
   private timeoutMs: number;
+  private pinnedApiKey: boolean;
 
   constructor(config?: Partial<OneProviderConfig>) {
     this.baseUrl = (config?.baseUrl || process.env.ONEPROVIDER_BASE_URL || 'https://api.oneprovider.dev').replace(/\/+$/, '');
@@ -26,6 +28,7 @@ export class OneProviderCoreAdapter implements NeuralCoreAdapter {
     this.model = config?.model || process.env.ONEPROVIDER_MODEL || 'claude-sonnet-4-6';
     this.protocol = config?.protocol || 'anthropic-messages';
     this.timeoutMs = config?.timeoutMs || 60000;
+    this.pinnedApiKey = config?.apiKey !== undefined;
   }
 
   public getBaseUrl(): string {
@@ -50,6 +53,20 @@ export class OneProviderCoreAdapter implements NeuralCoreAdapter {
 
   public setApiKey(key: string): void {
     this.apiKey = key;
+    this.pinnedApiKey = true;
+  }
+
+  private async refreshCredential(): Promise<void> {
+    if (this.pinnedApiKey) {
+      return;
+    }
+    const token = await resolveBearerToken({
+      connectorUid: process.env.CONNECT_ONEPROVIDER,
+      fallback: process.env.ONEPROVIDER_KEY,
+    });
+    if (token !== undefined) {
+      this.apiKey = token;
+    }
   }
 
   public getProtocol(): 'anthropic-messages' | 'openai-compatible' {
@@ -61,6 +78,7 @@ export class OneProviderCoreAdapter implements NeuralCoreAdapter {
   }
 
   public async testConnection(): Promise<{ ok: boolean; message: string }> {
+    await this.refreshCredential();
     if (!this.apiKey) {
       return {
         ok: false,
@@ -112,6 +130,7 @@ export class OneProviderCoreAdapter implements NeuralCoreAdapter {
 
   public async execute(prompt: WrappedPrompt): Promise<NeuralCoreResponse> {
     const start = Date.now();
+    await this.refreshCredential();
 
     if (!this.apiKey) {
       return {

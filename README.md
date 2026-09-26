@@ -23,6 +23,30 @@ npm install
 python3 -m pip install -r requirements.txt
 ```
 
+## Codespace
+
+GitHub Codespaces liest [`.devcontainer/devcontainer.json`](.devcontainer/devcontainer.json) (Node 22, `npm ci`, Port 3000). Die API läuft als Vercel Function auf Fluid Compute; `vercel dev` liefert sie zusammen mit der Vite-Oberfläche.
+
+```bash
+npx vercel link
+npx vercel env pull .env.local --yes
+npm run dev:vercel
+```
+
+Connector-UIDs (keine Secrets) stehen in `.env.local`:
+
+- `CONNECT_GEMINI` — Bearer-Token für Gemini, sonst `GEMINI_API_KEY`
+- `CONNECT_ONEPROVIDER` — Bearer-Token für OneProvider, sonst `ONEPROVIDER_KEY`
+- `CONNECT_GITHUB` — `GET /api/connect/github` ruft die GitHub-User-API auf
+
+Connector anlegen (Browser-Zustimmung nötig, aus diesem Verzeichnis):
+
+```bash
+npx vercel connect create github --name nin
+```
+
+Kraken bleibt auf `KRAKEN_API_KEY` und `KRAKEN_API_SECRET`. Connect liefert Bearer-Tokens, kein HMAC-Schlüsselpaar.
+
 ## Bauen und Testen
 
 ```bash

@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
   const payload = JSON.stringify(body);
@@ -12,18 +12,19 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
 }
 
 /**
- * Kraken routes on Vercel. Imports are inside the handler so a load
- * failure is returned as JSON instead of killing the function process.
+ * One Node.js function on Fluid Compute for every API route except
+ * `/api/kraken/status`, which stays on `api/kraken/status.js`.
+ * Imports stay inside the handler so a load failure is returned as JSON.
+ * `req.url` stays the original path after the vercel.json rewrite.
  */
 export default async function handler(req: IncomingMessage, res: ServerResponse): Promise<void> {
   try {
-    const { handleKrakenApi } = await import('../backend/krakenHttp');
-    const { KrakenOrderExecutor } = await import('../backend/kraken');
-    const handled = await handleKrakenApi(req, res, new KrakenOrderExecutor());
+    const { handleRequest } = await import('../backend/handleRequest');
+    const handled = await handleRequest(req, res);
     if (handled || res.headersSent) {
       return;
     }
-    sendJson(res, 404, { error: 'Not found', url: req.url || '' });
+    sendJson(res, 404, { error: 'Not found' });
   } catch (error) {
     const message = error instanceof Error ? error.stack || error.message : String(error);
     if (!res.headersSent) {
