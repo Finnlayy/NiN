@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   ShieldCheck,
   ShieldAlert,
@@ -42,6 +42,21 @@ export interface AxiomAlertItem {
   message: string;
 }
 
+// Resolves the price/volatility spec for a symbol from the live feed when
+// available, falling back to the simulated blueprint constants.
+function resolveAssetSpec(sym: string): { basePrice: number; atr: number } {
+  switch (sym) {
+    case 'SOL/USD':
+      return { basePrice: getLiveSpot('SOL', 182.40), atr: 5.80 };
+    case 'SUI/USD':
+      return { basePrice: 3.42, atr: 0.18 };
+    case 'ETH/USD':
+      return { basePrice: 2780.00, atr: 38.5 };
+    default:
+      return { basePrice: getLiveSpot('BTC', 64280.50), atr: 420 };
+  }
+};
+
 export default function SystemAxiomMonitor({ onLogEvent, className = '' }: SystemAxiomMonitorProps) {
   // Live Telemetry Baseline
   const [telemetry, setTelemetry] = useState(() => getLiveOmegaTelemetry());
@@ -60,8 +75,18 @@ export default function SystemAxiomMonitor({ onLogEvent, className = '' }: Syste
 
   // Re-render once when the first live tick replaces the fallback prices,
   // so mount-time memos/state below do not freeze the simulated values.
+  // The tick bump AND the candidate-order re-sync happen in the same callback
+  // so React batches them: no intermediate render pairs live bounds with the
+  // stale fallback target (which would fire a phantom Axiom-1 breach alert).
   const [liveSpotTick, setLiveSpotTick] = useState(0);
-  useEffect(() => onLiveSpotReady(() => setLiveSpotTick(t => t + 1)), []);
+  const symbolRef = useRef(symbol);
+  symbolRef.current = symbol;
+  useEffect(() => onLiveSpotReady(() => {
+    setLiveSpotTick(t => t + 1);
+    const spec = resolveAssetSpec(symbolRef.current);
+    setTargetPrice(spec.basePrice);
+    setExchangeStopLoss(Number((spec.basePrice - spec.atr * 1.2).toFixed(2)));
+  }), []);
 
   // Live alerts log
   const [alerts, setAlerts] = useState<AxiomAlertItem[]>(() => [
@@ -93,21 +118,11 @@ export default function SystemAxiomMonitor({ onLogEvent, className = '' }: Syste
 
   // Asset price presets
   const assetSpecs: Record<string, { basePrice: number; atr: number }> = useMemo(() => ({
-    'BTC/USD': { basePrice: getLiveSpot('BTC', 64280.50), atr: 420 },
-    'SOL/USD': { basePrice: getLiveSpot('SOL', 182.40), atr: 5.80 },
-    'SUI/USD': { basePrice: 3.42, atr: 0.18 },
-    'ETH/USD': { basePrice: 2780.00, atr: 38.5 },
+    'BTC/USD': resolveAssetSpec('BTC/USD'),
+    'SOL/USD': resolveAssetSpec('SOL/USD'),
+    'SUI/USD': resolveAssetSpec('SUI/USD'),
+    'ETH/USD': resolveAssetSpec('ETH/USD'),
   }), [liveSpotTick]);
-
-  // Sync the candidate-order fields with the freshly arrived live price
-  // (mirrors handleSymbolChange, runs only on the first live tick).
-  useEffect(() => {
-    if (liveSpotTick === 0) return;
-    const spec = assetSpecs[symbol];
-    if (!spec) return;
-    setTargetPrice(spec.basePrice);
-    setExchangeStopLoss(Number((spec.basePrice - spec.atr * 1.2).toFixed(2)));
-  }, [liveSpotTick]);
 
   // Update target price when symbol changes
   const handleSymbolChange = (newSymbol: 'BTC/USD' | 'SOL/USD' | 'SUI/USD' | 'ETH/USD') => {
