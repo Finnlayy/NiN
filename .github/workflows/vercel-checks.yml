@@ -68,7 +68,10 @@ jobs:
         run: |
           test -f api/kraken/status.js || { echo "api/kraken/status.js missing"; exit 1; }
           node --check api/kraken/status.js
-          test -f api/handler.ts || { echo "api/handler.ts missing"; exit 1; }
+          test -f api/handler.js || { echo "api/handler.js missing"; exit 1; }
+          node --check api/handler.js
+          test -f api/worker/dca.js || { echo "api/worker/dca.js missing"; exit 1; }
+          node --check api/worker/dca.js
           echo "API functions OK"
 
       - name: Validate vercel.json
@@ -107,7 +110,7 @@ jobs:
               console.log('Live BTC ticker OK:',j.ticker.BTCUSD.last);
             });"
 
-          # API routes served through api/handler.ts (rewrites in vercel.json)
+          # API routes served through api/handler.js (CJS shim over api/_build/handler.cjs; rewrites in vercel.json)
           HEALTH=$(curl -fsS "$SITE/api/health")
           echo "$HEALTH" | node -e "
             let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{
