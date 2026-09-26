@@ -1,8 +1,10 @@
-import { exec } from 'child_process';
+import { execFile } from 'child_process';
 import { promisify } from 'util';
 import fs from 'fs';
+import path from 'path';
+import zlib from 'zlib';
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 export type KrakenOrderRequest = {
   pair: string;
@@ -11,16 +13,6 @@ export type KrakenOrderRequest = {
   volume: number;
   price?: number;
 };
-
-export interface KrakenLimbStatus {
-  name: string;
-  pair: string;
-  mode: string;
-  status: 'ONLINE' | 'ACTIVE' | 'STANDBY' | 'DISCONNECTED';
-  filledCount: number;
-  interval?: string;
-  lastExecution?: string;
-}
 
 export interface KrakenRecentOrder {
   id: string;
@@ -34,209 +26,502 @@ export interface KrakenRecentOrder {
   venue: string;
 }
 
+type CliResult = {
+  ok: boolean;
+  stdout: string;
+  stderr: string;
+  code: number | null;
+};
+
+const CLI_TIMEOUT_MS = 20_000;
+
+const CLI_RELEASE = 'v0.4.1';
+
+function releaseAssetName(): string {
+  return process.arch === 'arm64'
+    ? 'kraken-cli-aarch64-unknown-linux-gnu.tar.gz'
+    : 'kraken-cli-x86_64-unknown-linux-gnu.tar.gz';
+}
+
+function candidatePaths(): string[] {
+  const paths: string[] = [];
+  if (process.env.KRAKEN_CLI_PATH) {
+    paths.push(process.env.KRAKEN_CLI_PATH);
+  }
+  paths.push(
+    path.join(process.cwd(), 'bin', 'kraken'),
+    '/var/task/bin/kraken',
+    '/tmp/kraken',
+    '/usr/local/bin/kraken',
+    '/root/.cargo/bin/kraken'
+  );
+  const pathEnv = process.env.PATH || '';
+  for (const dir of pathEnv.split(path.delimiter)) {
+    if (dir) {
+      paths.push(path.join(dir, 'kraken'));
+    }
+  }
+  return paths;
+}
+
+function extractKrakenBinary(gzipBuffer: Buffer, dest: string): boolean {
+  const tar = zlib.gunzipSync(gzipBuffer);
+  let offset = 0;
+  while (offset + 512 <= tar.length) {
+    const header = tar.subarray(offset, offset + 512);
+    if (header.every((byte) => byte === 0)) {
+      break;
+    }
+    const name = header.subarray(0, 100).toString('utf8').replace(/\0.*$/, '');
+    const size = parseInt(header.subarray(124, 136).toString('utf8').replace(/\0.*$/, '').trim() || '0', 8);
+    const typeflag = String.fromCharCode(header[156]);
+    offset += 512;
+    const data = tar.subarray(offset, offset + size);
+    offset += Math.ceil(size / 512) * 512;
+    if ((typeflag === '0' || typeflag === '\0') && name.endsWith('/kraken') && !name.includes('..')) {
+      fs.writeFileSync(dest, data);
+      fs.chmodSync(dest, 0o755);
+      return true;
+    }
+  }
+  return false;
+}
+
+function isExecutableFile(filePath: string): boolean {
+  try {
+    const stat = fs.statSync(filePath);
+    return stat.isFile();
+  } catch {
+    return false;
+  }
+}
+
+function parseJson(stdout: string): unknown {
+  const trimmed = stdout.trim();
+  if (!trimmed) {
+    return null;
+  }
+  return JSON.parse(trimmed);
+}
+
+function quoteError(stderr: string, fallback: string): string {
+  const text = stderr.replace(/\s+/g, ' ').trim();
+  if (!text) {
+    return fallback;
+  }
+  return text.slice(0, 500);
+}
+
+function tickerQuote(payload: unknown, hints: string[]): Record<string, unknown> | null {
+  if (!payload || typeof payload !== 'object') {
+    return null;
+  }
+  const record = payload as Record<string, unknown>;
+  for (const hint of hints) {
+    const value = record[hint];
+    if (value && typeof value === 'object') {
+      return value as Record<string, unknown>;
+    }
+  }
+  const firstKey = Object.keys(record)[0];
+  if (!firstKey) {
+    return null;
+  }
+  const value = record[firstKey];
+  return value && typeof value === 'object' ? (value as Record<string, unknown>) : null;
+}
+
+function priceOf(quote: Record<string, unknown> | null): number | null {
+  const raw = quote?.last_price;
+  const price = typeof raw === 'number' ? raw : Number(raw);
+  return Number.isFinite(price) && price > 0 ? price : null;
+}
+
+function limb(name: string, pair: string, mode: string, online: boolean, interval?: string) {
+  return {
+    name,
+    pair,
+    mode,
+    status: online ? (interval ? 'ACTIVE' : 'ONLINE') : 'DISCONNECTED',
+    filledCount: 0,
+    ...(interval
+      ? { interval: online ? interval : 'Inactive (No Connection)', lastExecution: online ? 'Idle' : 'Never' }
+      : {}),
+  };
+}
+
 export class KrakenOrderExecutor {
-  private cliPath: string;
+  private cliPath: string | null;
   private recentOrdersList: KrakenRecentOrder[] = [];
+  private cliVersion: string | null = null;
+  private preparing: Promise<string | null> | null = null;
 
   constructor() {
-    this.cliPath = process.env.KRAKEN_CLI_PATH || '/root/.cargo/bin/kraken';
+    this.cliPath = this.resolveCliPath();
   }
 
   /**
-   * Checks whether the native Kraken CLI binary exists in the current environment.
+   * Use a binary already on disk. On a host that does not have one, download
+   * the official Linux release into /tmp and use that.
    */
-  public hasNativeCli(): boolean {
+  private async ensureCli(): Promise<string | null> {
+    const found = this.resolveCliPath();
+    if (found) {
+      this.cliPath = found;
+      return found;
+    }
+    if (!this.preparing) {
+      this.preparing = this.downloadCli().finally(() => {
+        this.preparing = null;
+      });
+    }
+    const downloaded = await this.preparing;
+    this.cliPath = downloaded;
+    return downloaded;
+  }
+
+  private async downloadCli(): Promise<string | null> {
+    const asset = releaseAssetName();
+    const dest = '/tmp/kraken';
+    const url = `https://github.com/krakenfx/kraken-cli/releases/download/${CLI_RELEASE}/${asset}`;
     try {
-      return fs.existsSync(this.cliPath);
+      const response = await fetch(url);
+      if (!response.ok) {
+        return null;
+      }
+      const wrote = extractKrakenBinary(Buffer.from(await response.arrayBuffer()), dest);
+      return wrote && isExecutableFile(dest) ? dest : null;
     } catch {
-      return false;
+      return null;
     }
   }
 
   /**
-   * Checks whether Kraken API credentials are configured in environment.
+   * Prefer KRAKEN_CLI_PATH, then the binary shipped at bin/kraken, then PATH.
    */
+  public resolveCliPath(): string | null {
+    for (const candidate of candidatePaths()) {
+      if (isExecutableFile(candidate)) {
+        return candidate;
+      }
+    }
+    return null;
+  }
+
+  public hasNativeCli(): boolean {
+    this.cliPath = this.cliPath && isExecutableFile(this.cliPath) ? this.cliPath : this.resolveCliPath();
+    return Boolean(this.cliPath);
+  }
+
   public hasApiCredentials(): boolean {
     return Boolean(process.env.KRAKEN_API_KEY && process.env.KRAKEN_API_SECRET);
   }
 
-  /**
-   * Returns true only if a real connection method is available.
-   */
-  public isConnected(): boolean {
-    return this.hasNativeCli() || this.hasApiCredentials();
-  }
-
-  /**
-   * Execute an order.
-   * ZERO-DUMMY GUARANTEE:
-   * If there is no real Kraken connection, NO order is simulated or invented.
-   * The order is strictly rejected (Fail-Closed, Via Negativa).
-   */
-  async executeOrder(
-    req: KrakenOrderRequest,
-    limbContext?: { limb: 4 | 5; name: string }
-  ): Promise<any> {
-    if (!this.isConnected()) {
-      const limbName = limbContext ? limbContext.name : 'Unknown Limb';
-      const errorMsg = `NO_KRAKEN_CONNECTION: Keine aktive Verbindung zu Kraken gefunden (weder CLI unter '${this.cliPath}' noch API-Credentials konfiguriert). Zero-Dummy Guarantee: Es werden keine Schein-Orders simuliert. Ausführung abgebrochen (Fail-Closed).`;
-      
+  private async runCli(args: string[]): Promise<CliResult> {
+    const cliPath = this.hasNativeCli() ? this.cliPath : null;
+    if (!cliPath) {
       return {
-        success: false,
-        connected: false,
-        error: errorMsg,
-        status: 'REJECTED',
-        pair: req.pair,
-        type: req.type,
-        volume: req.volume,
-        limb: limbName,
-        timestamp: new Date().toISOString()
-      };
-    }
-
-    // Real execution via Kraken CLI binary
-    if (this.hasNativeCli()) {
-      let cmd = `${this.cliPath} order create ${req.pair} ${req.type} ${req.ordertype} ${req.volume}`;
-      if (req.price) {
-        cmd += ` --price ${req.price}`;
-      }
-      try {
-        const { stdout, stderr } = await execAsync(cmd);
-        if (stderr) {
-          console.warn('[Kraken CLI] STDERR:', stderr);
-        }
-        let parsed: any;
-        try {
-          parsed = JSON.parse(stdout);
-        } catch {
-          parsed = { raw: stdout };
-        }
-        return {
-          success: true,
-          connected: true,
-          ...parsed
-        };
-      } catch (err: any) {
-        return {
-          success: false,
-          connected: true,
-          error: `Kraken CLI Execution Error: ${err?.message || String(err)}`
-        };
-      }
-    }
-
-    return {
-      success: false,
-      connected: false,
-      error: 'NO_KRAKEN_CONNECTION: Exchange gateway offline.'
-    };
-  }
-
-  /**
-   * Execute CLI command directly.
-   * ZERO-DUMMY GUARANTEE:
-   * Returns genuine output from the CLI if available.
-   * If not available, returns an honest DISCONNECTED status instead of fake JSON.
-   */
-  async executeCommand(args: string): Promise<any> {
-    const trimmed = (args || '').trim();
-
-    if (!this.hasNativeCli()) {
-      return {
-        success: false,
-        connected: false,
-        command: trimmed,
-        error: `NO_KRAKEN_CONNECTION: Kraken CLI binary '${this.cliPath}' existiert nicht in dieser Umgebung. Zero-Dummy Guarantee: Es werden keine Schein-Antworten oder Fake-Balances generiert.`
+        ok: false,
+        stdout: '',
+        stderr: 'Kraken CLI binary was not found.',
+        code: null,
       };
     }
 
     try {
-      const cmd = `${this.cliPath} ${trimmed} --output json`;
-      const { stdout, stderr } = await execAsync(cmd);
-      if (stderr) {
-        console.warn('[Kraken CLI] STDERR:', stderr);
-      }
-      try {
-        return JSON.parse(stdout);
-      } catch {
-        return { raw: stdout, success: true };
-      }
-    } catch (err: any) {
+      const { stdout, stderr } = await execFileAsync(cliPath, args, {
+        timeout: CLI_TIMEOUT_MS,
+        maxBuffer: 2 * 1024 * 1024,
+        env: { ...process.env, KRAKEN_LOG_FORMAT: 'compact' },
+      });
+      return { ok: true, stdout, stderr, code: 0 };
+    } catch (err: unknown) {
+      const error = err as { stdout?: string; stderr?: string; message?: string; code?: number | string };
       return {
-        success: false,
-        connected: true,
-        command: trimmed,
-        error: `Kraken CLI Error: ${err?.message || String(err)}`
+        ok: false,
+        stdout: error.stdout || '',
+        stderr: error.stderr || error.message || String(err),
+        code: typeof error.code === 'number' ? error.code : null,
       };
     }
   }
 
-  /**
-   * Return the live state of the Kraken Execution Mesh.
-   * ZERO-DUMMY GUARANTEE:
-   * If there is no connection, connected is strictly false,
-   * filledCount is 0, and recentOrders is empty.
-   */
-  getExecutionStatus(): any {
-    const connected = this.isConnected();
+  private disconnected(reason: string) {
+    return {
+      connected: false,
+      exchange: 'Kraken Pro',
+      engine: 'OFFLINE',
+      status: 'DISCONNECTED',
+      latencyMs: null,
+      cliPath: this.cliPath,
+      cliVersion: this.cliVersion,
+      tier: null,
+      ticker: null,
+      system: null,
+      reason,
+      limbs: {
+        limb_1: limb('Swarm Limb 1 (Scout Node)', 'BTCUSD', 'Trigger Scout Tranche', false),
+        limb_2: limb('Swarm Limb 2 (Pyramid Node)', 'BTCUSD', 'ATR Trailing Tranches', false),
+        limb_3: limb('Swarm Limb 3 (Cluster Exit)', 'BTCUSD', 'Atomic Market Ground State', false),
+        limb_4: limb('Swarm Limb 4 (Btc Dca)', 'BTCUSD', 'Dynamic Dip-DCA ($150)', false, 'Every 4h or Dip > -2.5%'),
+        limb_5: limb('Swarm Limb 5 (Sol Dca)', 'SOLUSD', 'High-Beta Dip Accumulation ($75)', false, 'Every 4h or Dip > -4.0%'),
+      },
+      recentOrders: [] as KrakenRecentOrder[],
+    };
+  }
 
-    if (!connected) {
+  /**
+   * Live status from the Kraken CLI. connected is true only after `kraken status` reports online.
+   */
+  async getExecutionStatus(): Promise<Record<string, unknown>> {
+    await this.ensureCli();
+    if (!this.hasNativeCli() || !this.cliPath) {
+      return this.disconnected(
+        'Kraken CLI binary not found. Set KRAKEN_CLI_PATH or install the kraken binary on PATH. Looked for bin/kraken, /usr/local/bin/kraken, and /root/.cargo/bin/kraken.'
+      );
+    }
+
+    const started = Date.now();
+    const [versionRun, statusRun, tickerRun] = await Promise.all([
+      this.cliVersion ? Promise.resolve(null) : this.runCli(['--version']),
+      this.runCli(['status', '-o', 'json']),
+      this.runCli(['ticker', 'BTCUSD', 'SOLUSD', '-o', 'json']),
+    ]);
+    const latencyMs = Date.now() - started;
+
+    if (versionRun?.ok) {
+      this.cliVersion = versionRun.stdout.trim() || this.cliVersion;
+    }
+
+    if (!statusRun.ok) {
       return {
-        connected: false,
-        exchange: 'Kraken Pro',
-        engine: 'OFFLINE',
-        status: 'DISCONNECTED',
-        latencyMs: null,
-        tier: null,
-        ocoShadowMeshActive: false,
-        autoEarnFlexibleApy: null,
-        reason: `Keine Verbindung zu Kraken. Weder '${this.cliPath}' noch KRAKEN_API_KEY/KRAKEN_API_SECRET vorhanden. Keine Schein-Simulation aktiv.`,
-        limbs: {
-          limb_1: { name: 'Swarm Limb 1 (Scout Node)', pair: 'XXBTZUSD', mode: 'Trigger Scout Tranche', status: 'DISCONNECTED', filledCount: 0 },
-          limb_2: { name: 'Swarm Limb 2 (Pyramid Node)', pair: 'XXBTZUSD', mode: 'ATR Trailing Tranches', status: 'DISCONNECTED', filledCount: 0 },
-          limb_3: { name: 'Swarm Limb 3 (Cluster Exit)', pair: 'XXBTZUSD', mode: 'Atomic Market Ground State', status: 'DISCONNECTED', filledCount: 0 },
-          limb_4: { name: 'Swarm Limb 4 (Btc Dca)', pair: 'XXBTZUSD', mode: 'Dynamic Dip-DCA ($150)', status: 'DISCONNECTED', interval: 'Inactive (No Connection)', lastExecution: 'Never', filledCount: 0 },
-          limb_5: { name: 'Swarm Limb 5 (Sol Dca)', pair: 'SOLUSD', mode: 'High-Beta Dip Accumulation ($75)', status: 'DISCONNECTED', interval: 'Inactive (No Connection)', lastExecution: 'Never', filledCount: 0 }
-        },
-        recentOrders: []
+        ...this.disconnected(
+          `Kraken CLI at ${this.cliPath} did not return status. ${quoteError(statusRun.stderr, 'No stderr.')}`
+        ),
+        latencyMs,
+        cliPath: this.cliPath,
+        cliVersion: this.cliVersion,
+      };
+    }
+
+    let system: Record<string, unknown> | null = null;
+    try {
+      const parsed = parseJson(statusRun.stdout);
+      system = parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null;
+    } catch {
+      return {
+        ...this.disconnected(`Kraken CLI status was not JSON: ${statusRun.stdout.slice(0, 180)}`),
+        latencyMs,
+        cliPath: this.cliPath,
+      };
+    }
+
+    let ticker: { BTCUSD: { last: number; bid: number | null; ask: number | null } | null; SOLUSD: { last: number; bid: number | null; ask: number | null } | null } | null = null;
+    if (tickerRun.ok) {
+      try {
+        const parsed = parseJson(tickerRun.stdout);
+        const btc = tickerQuote(parsed, ['XXBTZUSD', 'XBTUSD', 'BTCUSD']);
+        const sol = tickerQuote(parsed, ['SOLUSD']);
+        const btcLast = priceOf(btc);
+        const solLast = priceOf(sol);
+        ticker = {
+          BTCUSD: btcLast
+            ? { last: btcLast, bid: priceOf(btc ? { last_price: btc.bid_price } : null), ask: priceOf(btc ? { last_price: btc.ask_price } : null) }
+            : null,
+          SOLUSD: solLast
+            ? { last: solLast, bid: priceOf(sol ? { last_price: sol.bid_price } : null), ask: priceOf(sol ? { last_price: sol.ask_price } : null) }
+            : null,
+        };
+      } catch {
+        ticker = null;
+      }
+    }
+
+    const online = system?.status === 'online';
+    if (!online) {
+      return {
+        ...this.disconnected(`Kraken system status is ${String(system?.status ?? 'unknown')}.`),
+        latencyMs,
+        cliPath: this.cliPath,
+        cliVersion: this.cliVersion,
+        system,
+        ticker,
       };
     }
 
     return {
       connected: true,
       exchange: 'Kraken Pro',
-      engine: 'Kraken CLI Gateway',
+      engine: 'Kraken CLI',
       status: 'ONLINE',
+      latencyMs,
+      cliPath: this.cliPath,
+      cliVersion: this.cliVersion,
+      system,
+      ticker,
       limbs: {
-        limb_1: { name: 'Swarm Limb 1 (Scout Node)', pair: 'XXBTZUSD', mode: 'Trigger Scout Tranche', status: 'ONLINE', filledCount: 0 },
-        limb_2: { name: 'Swarm Limb 2 (Pyramid Node)', pair: 'XXBTZUSD', mode: 'ATR Trailing Tranches', status: 'ONLINE', filledCount: 0 },
-        limb_3: { name: 'Swarm Limb 3 (Cluster Exit)', pair: 'XXBTZUSD', mode: 'Atomic Market Ground State', status: 'ONLINE', filledCount: 0 },
-        limb_4: { name: 'Swarm Limb 4 (Btc Dca)', pair: 'XXBTZUSD', mode: 'Dynamic Dip-DCA ($150)', status: 'ACTIVE', interval: 'Every 4h or Dip > -2.5%', lastExecution: 'Idle', filledCount: 0 },
-        limb_5: { name: 'Swarm Limb 5 (Sol Dca)', pair: 'SOLUSD', mode: 'High-Beta Dip Accumulation ($75)', status: 'ACTIVE', interval: 'Every 4h or Dip > -4.0%', lastExecution: 'Idle', filledCount: 0 }
+        limb_1: limb('Swarm Limb 1 (Scout Node)', 'BTCUSD', 'Trigger Scout Tranche', true),
+        limb_2: limb('Swarm Limb 2 (Pyramid Node)', 'BTCUSD', 'ATR Trailing Tranches', true),
+        limb_3: limb('Swarm Limb 3 (Cluster Exit)', 'BTCUSD', 'Atomic Market Ground State', true),
+        limb_4: limb('Swarm Limb 4 (Btc Dca)', 'BTCUSD', 'Dynamic Dip-DCA ($150)', true, 'Every 4h or Dip > -2.5%'),
+        limb_5: limb('Swarm Limb 5 (Sol Dca)', 'SOLUSD', 'High-Beta Dip Accumulation ($75)', true, 'Every 4h or Dip > -4.0%'),
       },
-      recentOrders: this.recentOrdersList
+      recentOrders: this.recentOrdersList,
     };
   }
 
-  /**
-   * Execute DCA tranche. Strictly fails closed if no connection is present.
-   */
-  async executeDca(limb: 4 | 5, asset: 'BTC' | 'SOL', amountUSD: number): Promise<any> {
-    const pair = asset === 'BTC' ? 'XXBTZUSD' : 'SOLUSD';
-    const estPrice = asset === 'BTC' ? 64200 : 145;
-    const volume = Number((amountUSD / estPrice).toFixed(asset === 'BTC' ? 6 : 4));
+  async executeOrder(
+    req: KrakenOrderRequest,
+    limbContext?: { limb: 4 | 5; name: string }
+  ): Promise<Record<string, unknown>> {
+    const limbName = limbContext ? limbContext.name : 'Unknown Limb';
+    await this.ensureCli();
+    if (!this.hasNativeCli() || !this.cliPath) {
+      return {
+        success: false,
+        connected: false,
+        error: 'NO_KRAKEN_CONNECTION: Kraken CLI binary not found. Order was not sent.',
+        status: 'REJECTED',
+        pair: req.pair,
+        type: req.type,
+        volume: req.volume,
+        limb: limbName,
+        timestamp: new Date().toISOString(),
+      };
+    }
 
+    const side = req.type === 'sell' ? 'sell' : 'buy';
+    const args = [
+      'order',
+      side,
+      req.pair,
+      String(req.volume),
+      '--type',
+      req.ordertype,
+      '-o',
+      'json',
+      '--yes',
+    ];
+    if (req.price !== undefined) {
+      args.push('--price', String(req.price));
+    }
+
+    const result = await this.runCli(args);
+    if (!result.ok) {
+      return {
+        success: false,
+        connected: true,
+        error: `Kraken CLI rejected the order. ${quoteError(result.stderr, result.stdout || 'No CLI output.')}`,
+        status: 'REJECTED',
+        pair: req.pair,
+        type: req.type,
+        volume: req.volume,
+        limb: limbName,
+        timestamp: new Date().toISOString(),
+      };
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = parseJson(result.stdout);
+    } catch {
+      parsed = { raw: result.stdout };
+    }
+
+    return {
+      success: true,
+      connected: true,
+      limb: limbName,
+      ...(parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : { raw: result.stdout }),
+    };
+  }
+
+  async executeCommand(args: string): Promise<Record<string, unknown>> {
+    const trimmed = (args || '').trim().replace(/^kraken\s+/, '');
+    await this.ensureCli();
+    if (!this.hasNativeCli() || !this.cliPath) {
+      return {
+        success: false,
+        connected: false,
+        command: trimmed,
+        error: 'NO_KRAKEN_CONNECTION: Kraken CLI binary not found.',
+      };
+    }
+
+    const parts = trimmed.length > 0 ? trimmed.split(/\s+/) : ['status'];
+    if (!parts.includes('-o') && !parts.includes('--output')) {
+      parts.push('-o', 'json');
+    }
+
+    const result = await this.runCli(parts);
+    if (!result.ok) {
+      return {
+        success: false,
+        connected: true,
+        command: trimmed,
+        error: `Kraken CLI Error: ${quoteError(result.stderr, result.stdout || 'command failed')}`,
+      };
+    }
+
+    try {
+      const parsed = parseJson(result.stdout);
+      return {
+        success: true,
+        connected: true,
+        command: trimmed,
+        ...(parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : { raw: result.stdout }),
+      };
+    } catch {
+      return { success: true, connected: true, command: trimmed, raw: result.stdout };
+    }
+  }
+
+  /**
+   * Size a market buy from the live ticker, then send it through the CLI.
+   * No order is sent when the ticker price is missing.
+   */
+  async executeDca(limb: 4 | 5, asset: 'BTC' | 'SOL', amountUSD: number): Promise<Record<string, unknown>> {
+    const pair = asset === 'BTC' ? 'BTCUSD' : 'SOLUSD';
+    await this.ensureCli();
+    if (!this.hasNativeCli()) {
+      return {
+        success: false,
+        connected: false,
+        error: 'NO_KRAKEN_CONNECTION: Kraken CLI binary not found. DCA order was not sent.',
+      };
+    }
+
+    const tickerRun = await this.runCli(['ticker', pair, '-o', 'json']);
+    if (!tickerRun.ok) {
+      return {
+        success: false,
+        connected: true,
+        error: `DCA aborted. Ticker for ${pair} failed. ${quoteError(tickerRun.stderr, 'No ticker.')}`,
+      };
+    }
+
+    let last: number | null = null;
+    try {
+      const parsed = parseJson(tickerRun.stdout);
+      const hints = asset === 'BTC' ? ['XXBTZUSD', 'XBTUSD', 'BTCUSD'] : ['SOLUSD'];
+      last = priceOf(tickerQuote(parsed, hints));
+    } catch {
+      last = null;
+    }
+
+    if (!last) {
+      return {
+        success: false,
+        connected: true,
+        error: `DCA aborted. Kraken ticker for ${pair} did not include a last price.`,
+      };
+    }
+
+    const decimals = asset === 'BTC' ? 8 : 4;
+    const volume = Number((amountUSD / last).toFixed(decimals));
     return this.executeOrder(
-      {
-        pair,
-        type: 'buy',
-        ordertype: 'market',
-        volume
-      },
-      {
-        limb,
-        name: `Limb ${limb} (${asset} Dca)`
-      }
+      { pair, type: 'buy', ordertype: 'market', volume },
+      { limb, name: `Limb ${limb} (${asset} Dca)` }
     );
   }
 }

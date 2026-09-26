@@ -7,9 +7,9 @@
   "scripts": {
     "dev": "tsx watch backend/server.ts",
     "dev:vercel": "vercel dev --listen 0.0.0.0:3000 --yes",
-    "build": "vite build && esbuild backend/server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
+    "build": "vite build && esbuild backend/server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist-server/server.cjs",
     "prestart": "npm run build",
-    "start": "NODE_ENV=production node dist/server.cjs",
+    "start": "NODE_ENV=production node dist-server/server.cjs",
     "lint": "tsc --noEmit",
     "typecheck": "tsc --noEmit"
   },
@@ -25,6 +25,7 @@
     "@google/genai": "^2.21.0",
     "@vercel/connect": "^2.3.2",
     "@xyflow/react": "^12.11.6",
+    "ai": "^7.0.112",
     "d3": "^7.9.0",
     "framer-motion": "^11.3.19",
     "lightweight-charts": "^4.1.3",

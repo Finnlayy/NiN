@@ -130,9 +130,9 @@ const KrakenExecutionNode = ({ data, selected }: NodeProps) => {
               )}
             </div>
             <p className={`text-[10px] font-mono ${isConnected ? 'text-cyan-300/70' : 'text-red-300/80'}`}>
-              {isConnected 
-                ? 'Sub-15µs Native REST / WebSocket v2 / FIX Protocol • Atomic 2PC OCO Shadow-Limit Mesh'
-                : 'Zero-Dummy Guarantee: Keine Kraken-Verbindung vorhanden. Keine Schein-Simulationen oder Fake-Orders. Routing Fail-Closed.'}
+              {isConnected
+                ? `Kraken CLI ${String(data.cliVersion || '')} • BTC ${data.btcLast ?? '—'} • SOL ${data.solLast ?? '—'}`
+                : String(data.reason || 'Kraken CLI did not return status. No orders are sent.')}
             </p>
           </div>
         </div>
@@ -142,14 +142,14 @@ const KrakenExecutionNode = ({ data, selected }: NodeProps) => {
             <>
               <div className="px-2.5 py-1 rounded bg-slate-900/80 border border-slate-700 text-slate-300 flex items-center gap-1.5">
                 <Radio className="w-3 h-3 text-cyan-400" />
-                <span>WSS: <strong>0.12ms</strong></span>
+                <span>CLI: <strong>{data.latencyMs != null ? `${data.latencyMs} ms` : '—'}</strong></span>
               </div>
               <div className="px-2.5 py-1 rounded bg-slate-900/80 border border-slate-700 text-slate-300 flex items-center gap-1.5">
                 <ShieldCheck className="w-3 h-3 text-emerald-400" />
-                <span>OCO Stop: <strong>SYNCHRON</strong></span>
+                <span>BTC: <strong>{data.btcLast != null ? String(data.btcLast) : '—'}</strong></span>
               </div>
               <div className="px-2.5 py-1 rounded bg-emerald-950/50 border border-emerald-500/30 text-emerald-300 font-bold">
-                Auto-Earn: 7.25% APY
+                SOL: {data.solLast != null ? String(data.solLast) : '—'}
               </div>
             </>
           ) : (
@@ -460,15 +460,26 @@ export default function AgentCanvas() {
                   ...node.data,
                   connected: data.connected,
                   state: data.connected ? 'GREEN_GLOW' : 'RED_GLOW',
+                  latencyMs: data.latencyMs,
+                  cliVersion: data.cliVersion,
+                  cliPath: data.cliPath,
+                  btcLast: data.ticker?.BTCUSD?.last ?? null,
+                  solLast: data.ticker?.SOLUSD?.last ?? null,
+                  reason: data.reason,
                   logs: data.connected
                     ? [
-                        'Kraken Pro REST / FIX / WebSocket v2 Engine ONLINE',
-                        'OCO Shadow-Limit Mesh: Active across all 5 Limb pipelines'
+                        `${data.cliVersion || 'kraken'} ${data.cliPath || ''}`.trim(),
+                        data.ticker?.BTCUSD?.last
+                          ? `BTCUSD last ${data.ticker.BTCUSD.last}`
+                          : 'BTC ticker missing',
+                        data.ticker?.SOLUSD?.last
+                          ? `SOLUSD last ${data.ticker.SOLUSD.last}`
+                          : 'SOL ticker missing'
                       ]
                     : [
                         'Exchange Status: DISCONNECTED / OFFLINE',
                         'Zero-Dummy Guarantee: Keine Schein-Orders simuliert',
-                        data.reason || 'Keine CLI (/root/.cargo/bin/kraken) & keine API-Keys'
+                        data.reason || 'Kraken CLI did not return status'
                       ]
                 }
               };
@@ -631,17 +642,21 @@ export default function AgentCanvas() {
                   </div>
                   {executionTelemetry?.connected ? (
                     <div className="space-y-1 text-[11px] text-slate-300">
-                      <div className="flex justify-between">
-                        <span className="text-slate-500">Matching Engine:</span>
-                        <span className="text-white">Sub-15µs FIX / WSS v2</span>
+                      <div className="flex justify-between gap-3">
+                        <span className="text-slate-500">CLI:</span>
+                        <span className="text-white truncate">{executionTelemetry.cliVersion || 'kraken'}</span>
                       </div>
                       <div className="flex justify-between">
-                        <span className="text-slate-500">OCO Hard-Stop Mesh:</span>
-                        <span className="text-emerald-400 font-bold">Axiom 5 Synchron</span>
+                        <span className="text-slate-500">BTCUSD last:</span>
+                        <span className="text-emerald-400 font-bold">{executionTelemetry.ticker?.BTCUSD?.last ?? '—'}</span>
                       </div>
                       <div className="flex justify-between">
-                        <span className="text-slate-500">Vault Flexible Earn:</span>
-                        <span className="text-emerald-400 font-bold">7.25% APY (Unbonded)</span>
+                        <span className="text-slate-500">SOLUSD last:</span>
+                        <span className="text-emerald-400 font-bold">{executionTelemetry.ticker?.SOLUSD?.last ?? '—'}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">Round trip:</span>
+                        <span className="text-white">{executionTelemetry.latencyMs ?? '—'} ms</span>
                       </div>
                     </div>
                   ) : (
@@ -651,7 +666,7 @@ export default function AgentCanvas() {
                         ZERO-DUMMY GUARANTEE: FAIL-CLOSED
                       </div>
                       <p className="text-slate-300 leading-relaxed text-[10px]">
-                        Keine Kraken CLI Binary (<code className="text-cyan-300">/root/.cargo/bin/kraken</code>) &amp; keine API-Credentials im Container vorhanden.
+                        {executionTelemetry?.reason || 'Kraken CLI binary was not found, or `kraken status` did not return online.'}
                       </p>
                       <p className="text-red-300/90 leading-relaxed text-[10px]">
                         Da keine Verbindung besteht, wird nichts simuliert (keine Schein-Orders, keine erfundenen Responses). Order-Routing ist Fail-Closed gesperrt.

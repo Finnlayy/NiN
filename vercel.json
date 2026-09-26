@@ -3,12 +3,17 @@
   "buildCommand": "vite build",
   "outputDirectory": "dist",
   "functions": {
+    "api/kraken/status.js": {
+      "maxDuration": 60
+    },
     "api/handler.ts": {
       "maxDuration": 300
     }
   },
   "rewrites": [
-    { "source": "/api/(.*)", "destination": "/api/handler" },
+    { "source": "/api/kraken/:action((?!status).*)", "destination": "/api/handler" },
+    { "source": "/api/:first((?!kraken).*)", "destination": "/api/handler" },
+    { "source": "/api/:first((?!kraken).*)/:rest*", "destination": "/api/handler" },
     { "source": "/learning", "destination": "/api/handler" },
     { "source": "/learning/(.*)", "destination": "/api/handler" },
     { "source": "/(.*)", "destination": "/index.html" }
