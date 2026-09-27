@@ -337,6 +337,12 @@ export class KrakenOrderExecutor {
       if (typeof env.KRAKEN_API_SECRET === 'string') {
         env.KRAKEN_API_SECRET = env.KRAKEN_API_SECRET.trim();
       }
+      if (env.VERCEL === '1') {
+        // Vercel's filesystem is read-only outside /tmp; the CLI journals
+        // live trades under $HOME, which would fail with "Read-only file
+        // system (os error 30)".
+        env.HOME = '/tmp';
+      }
       const { stdout, stderr } = await execFileAsync(cliPath, args, {
         timeout: CLI_TIMEOUT_MS,
         maxBuffer: 2 * 1024 * 1024,
