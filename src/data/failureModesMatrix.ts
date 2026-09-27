@@ -287,6 +287,46 @@ export const FAILURE_MODES_MATRIX: FailureModeItem[] = [
       metricThreshold: "α(s,t) Mean in [0.15, 0.65]; Keine stationäre Sättigung bei 1.0 über > 10 aufeinanderfolgende Ticks.",
       circuitBreakerState: "CLOSED"
     }
+  },
+  {
+    id: 13,
+    riskTitle: "Underfunded Real Account (EOrder:Insufficient funds blockiert Live-Fills)",
+    category: "EXCHANGE_NETWORK",
+    probability: "Hoch",
+    impact: "Mittel",
+    probabilityScore: 3,
+    impactScore: 1,
+    earlyDetection: "Verfügbares USD-Guthaben auf dem Real-Account < konfigurierte DCA-Tranche ($150 BTC / $75 SOL); Kraken antwortet auf Live-Orders mit EOrder:Insufficient funds.",
+    mitigation: "Automatischer Fallback pro Bot: identische Order auf isoliertem Kraken-Paper-Ledger (eigenes Workspace je Limb, virtuell $10k, Live-Preise, ehrliche PAPER-Kennzeichnung); realer Ablehnungsgrund bleibt im Datensatz erhalten. Echte Einzahlung schaltet ohne Code-Änderung zurück auf Real-Fills.",
+    pillar: "Pfeiler 2: Venue-Gateway & Microstructure-Execution",
+    isKillSwitchRelated: false,
+    technicalDetails: {
+      failureSignature: "Kraken-CLI-Envelope {'error':['EOrder:Insufficient funds']} auf stdout bei Exit-Code 1; Real-Balance (balance) zeigt USD < Order-Tranche.",
+      automatedAction: "executeOrder fängt Insufficient-funds ab und führt dieselbe Order via KRAKEN_WORKSPACE auf dem Paper-Ledger des jeweiligen Bots aus; Fill wird als venue 'Kraken Paper' mit status FILLED und realAccountError-Hinweis aufgezeichnet.",
+      verificationTest: "Live-Verifikation: Market-Buy auf underfunded Account liefert success:true, paper:true, venue 'Kraken Paper' plus FILLED-Eintrag mit PAPER-Tag im Order-Journal.",
+      metricThreshold: "100% der Insufficient-funds-Orders werden als PAPER getaggt (keine stillen Simulationen); Paper-Fill-Latenz < 60s; Venue-Detection anhand realBalance.USD.",
+      circuitBreakerState: "CLOSED"
+    }
+  },
+  {
+    id: 14,
+    riskTitle: "Ephemeral-State-Verlust (Serverless-Redeploy / Multi-Instance-Divergenz)",
+    category: "ORCHESTRATION_COST",
+    probability: "Hoch",
+    impact: "Mittel",
+    probabilityScore: 3,
+    impactScore: 1,
+    earlyDetection: "Order-Historie, Paper-Salden oder DCA-Referenzen erscheinen plötzlich leer/zurückgesetzt; /api/worker/dca/status meldet needsBaseline=true; Paper-Ledger steht wieder auf $10.000.",
+    mitigation: "Self-Healing ohne Eingriff: Paper-Workspaces erstellen sich beim ersten Fallback automatisch neu, der DCA-Worker re-baselined seine Referenzen beim nächsten Lauf. Persistenz auf Durable Storage (KV/Blob) ist als Backlog vorgesehen, um Instanz-Flicker zu eliminieren.",
+    pillar: "Pfeiler 5: Systemic Resilience & Meta-Governance",
+    isKillSwitchRelated: false,
+    technicalDetails: {
+      failureSignature: "State liegt in /tmp pro Serverless-Instanz: Nach Deploy oder bei Routing auf eine neue Instanz sind recentOrders leer, Paper-Journals zurückgesetzt und dca-reference.json nicht vorhanden.",
+      automatedAction: "Ensure-Paper-Workspace (idempotent, toleriert 'already exists') erstellt Ledgers bei Bedarf neu; Worker-Lauf setzt BASELINE_SET; UI degradiert auf 'No orders yet' statt Fehler.",
+      verificationTest: "Post-Deploy-Check: ein Worker-Lauf (BASELINE_SET für BTC & SOL) plus ein Status-Call mit verfügbaren Paper-Workspaces zeigt das Selbstheilungs-Verhalten.",
+      metricThreshold: "needsBaseline nach Deploy < 1 Worker-Zyklus (4h); kein 5xx durch fehlende State-Dateien; Paper-Workspace-Recreate < 20s.",
+      circuitBreakerState: "CLOSED"
+    }
   }
 ];
 
