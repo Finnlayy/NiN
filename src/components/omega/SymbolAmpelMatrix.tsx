@@ -5,7 +5,7 @@ import {
   Zap
 } from 'lucide-react';
 import { SymbolLampState } from '../../utils/omegaLogic';
-import { getLiveSpot, onLiveSpotReady } from '../../utils/liveSpot';
+import { getLiveSpot } from '../../utils/liveSpot';
 
 export interface EcosystemToken {
   symbol: string;
@@ -38,10 +38,14 @@ export default function SymbolAmpelMatrix({
   const [searchQuery, setSearchQuery] = useState('');
   const [inspectToken, setInspectToken] = useState<EcosystemToken | null>(null);
 
-  // Re-render once when the first live tick replaces the fallback prices,
-  // so the mount-time memo below does not freeze the simulated values.
+  // Re-render on every live-feed poll (10s), not just the first warm tick,
+  // so prices stay in sync with the Kraken/CoinGecko stream instead of
+  // freezing at the first tick that replaced the fallbacks.
   const [liveSpotTick, setLiveSpotTick] = useState(0);
-  useEffect(() => onLiveSpotReady(() => setLiveSpotTick(t => t + 1)), []);
+  useEffect(() => {
+    const id = setInterval(() => setLiveSpotTick(t => t + 1), 10_000);
+    return () => clearInterval(id);
+  }, []);
 
   // Canonical token list based on OMEGA-BLUEPRINT §8
   const tokens: EcosystemToken[] = useMemo(() => [

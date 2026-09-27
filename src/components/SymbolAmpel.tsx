@@ -15,6 +15,7 @@ import {
   getEcosystemMetaRotation,
   calculateLeaderAmpelState
 } from '../utils/omegaLogic';
+import { getLiveSpot, LiveSymbol } from '../utils/liveSpot';
 
 interface SymbolAmpelProps {
   onLogEvent?: (message: string, level: 'info' | 'warn' | 'error' | 'success', node?: string) => void;
@@ -96,6 +97,24 @@ export default function SymbolAmpel({ onLogEvent, className = '' }: SymbolAmpelP
 
     return () => clearInterval(timer);
   }, [handleForceRotation]);
+
+  // Re-sync prices from the live feed (polled every 10s by liveSpot) so the
+  // Ampel never drifts away from the Kraken/CoinGecko quote stream. Without
+  // this, priceUSD was snapshotted once at mount and went stale within
+  // seconds while other panels kept streaming.
+  useEffect(() => {
+    const resync = () => {
+      setLeaders(prevLeaders =>
+        prevLeaders.map(leader => ({
+          ...leader,
+          priceUSD: getLiveSpot(leader.symbol as LiveSymbol, leader.priceUSD)
+        }))
+      );
+    };
+    resync();
+    const id = setInterval(resync, 10_000);
+    return () => clearInterval(id);
+  }, []);
 
   // Live order flow micro-fluctuation simulation (when liveStreamActive)
   useEffect(() => {
@@ -715,7 +734,7 @@ export default function SymbolAmpel({ onLogEvent, className = '' }: SymbolAmpelP
 
       {/* ── TRADING BOT STATS POPUP TEMPLATE (MIT INTEGRIERTEM AMPELSYSTEM) ── */}
       {inspectorOpen && selectedLeader && (() => {
-        const curPrice = selectedLeader.priceUSD || (selectedLeader.symbol === 'BTC' ? 64200 : selectedLeader.symbol === 'ETH' ? 2450 : selectedLeader.symbol === 'SOL' ? 142 : 41.25);
+        const curPrice = selectedLeader.priceUSD || getLiveSpot(selectedLeader.symbol as LiveSymbol, selectedLeader.symbol === 'BTC' ? 64200 : selectedLeader.symbol === 'ETH' ? 2450 : selectedLeader.symbol === 'SOL' ? 142 : 41.25);
         const changePct = selectedLeader.change24h !== undefined ? selectedLeader.change24h : 5.2;
         const isProfit = changePct >= 0 && selectedLeader.lampState !== 'RED_GLOW';
         
