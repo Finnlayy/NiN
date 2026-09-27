@@ -165,7 +165,7 @@ export async function handleVercelApi(req: IncomingMessage, res: ServerResponse,
 
   // --- Automatic DCA worker (Vercel Cron target) --------------------------
   if (url === '/api/worker/dca/status' && method === 'GET') {
-    sendJson(res, 200, await getDcaDipStatus());
+    sendJson(res, 200, await getDcaDipStatus(krakenExecutor));
     return true;
   }
 

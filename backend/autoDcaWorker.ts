@@ -46,10 +46,38 @@ function loadDcaReferences(): Record<string, number> {
  * Read-only dip status for alerting: reports each configured asset's live
  * price, stored reference and distance to the buy trigger — WITHOUT placing
  * orders or touching the references. Poll-friendly.
+ *
+ * Prices come from the Kraken stream (the same venue the orders execute on,
+ * and the same source the references were baselined from); CoinGecko only
+ * covers an asset if the Kraken ticker is unreachable.
  */
-export async function getDcaDipStatus(): Promise<Record<string, unknown>> {
+export async function getDcaDipStatus(executor?: KrakenOrderExecutor): Promise<Record<string, unknown>> {
   const references = loadDcaReferences();
-  const { prices, source } = await getLivePrices();
+  let prices: Record<string, number>;
+  let source: string;
+  if (executor) {
+    const kraken = await executor.getSymbolTickers();
+    prices = { ...kraken.prices };
+    const missing = DCA_CONFIG.filter((cfg) => typeof prices[cfg.asset] !== 'number');
+    source = missing.length === 0 ? 'kraken' : 'kraken+coingecko-fallback';
+    if (missing.length > 0) {
+      try {
+        const cg = await getLivePrices();
+        for (const cfg of missing) {
+          const value = cg.prices[cfg.asset];
+          if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+            prices[cfg.asset] = value;
+          }
+        }
+      } catch {
+        /* keep whatever Kraken returned */
+      }
+    }
+  } else {
+    const cg = await getLivePrices();
+    prices = cg.prices;
+    source = cg.source;
+  }
   const assets = DCA_CONFIG.map((cfg) => {
     const last = prices[cfg.asset] ?? null;
     const reference = references[cfg.asset] ?? null;
