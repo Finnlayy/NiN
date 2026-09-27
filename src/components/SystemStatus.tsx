@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useEffect } from 'react';
 import {
   ShieldCheck,
   AlertTriangle,
@@ -25,6 +25,7 @@ import {
   AxiomVerificationResult,
   ViaNegativaState
 } from '../utils/omegaLogic';
+import { getLiveSpot, onLiveSpotReady } from '../utils/liveSpot';
 
 export interface SystemStatusProps {
   onLogEvent?: (message: string, level: 'info' | 'warn' | 'error' | 'success', node?: string) => void;
@@ -75,13 +76,18 @@ export default function SystemStatus({
   // Diagnostic simulation mode to demonstrate reactive status indicators
   const [diagnosticMode, setDiagnosticMode] = useState<DiagnosticMode>('NOMINAL');
 
+  // Re-render once when the first live tick replaces the fallback prices,
+  // so the mount-time memo below does not freeze the simulated values.
+  const [liveSpotTick, setLiveSpotTick] = useState(0);
+  useEffect(() => onLiveSpotReady(() => setLiveSpotTick(t => t + 1)), []);
+
   // Asset price & volatility specs
   const assetSpecs: Record<string, { basePrice: number; atr: number; step: number }> = useMemo(() => ({
-    'BTC/USD': { basePrice: 64280.50, atr: 420.0, step: 10 },
-    'SOL/USD': { basePrice: 182.40, atr: 5.80, step: 0.1 },
-    'SUI/USD': { basePrice: 3.42, atr: 0.18, step: 0.01 },
-    'ETH/USD': { basePrice: 2780.00, atr: 38.5, step: 1 },
-  }), []);
+    'BTC/USD': { basePrice: getLiveSpot('BTC', 84500), atr: 420.0, step: 10 },
+    'SOL/USD': { basePrice: getLiveSpot('SOL', 121), atr: 5.80, step: 0.1 },
+    'SUI/USD': { basePrice: getLiveSpot('SUI', 1.18), atr: 0.18, step: 0.01 },
+    'ETH/USD': { basePrice: getLiveSpot('ETH', 2705), atr: 38.5, step: 1 },
+  }), [liveSpotTick]);
 
   // Compute active target price based on diagnostic simulation
   const currentSpec = assetSpecs[selectedSymbol] || assetSpecs['BTC/USD'];

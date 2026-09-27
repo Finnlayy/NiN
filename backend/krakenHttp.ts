@@ -85,6 +85,30 @@ export async function handleKrakenApi(
     return true;
   }
 
+  if (method === 'GET' && (url === '/api/kraken/orders/recent' || url === '/api/kraken/orders')) {
+    sendJson(res, 200, { orders: krakenExecutor.getRecentOrders() });
+    return true;
+  }
+
+  if (method === 'POST' && url === '/api/kraken/test-order') {
+    try {
+      const body = await readJsonBody(req);
+      const pair = typeof body.pair === 'string' && body.pair ? body.pair : 'BTCUSD';
+      const volume = Number(body.volume) || 0.001;
+      const result = await krakenExecutor.validateOrder({
+        pair,
+        type: body.type === 'sell' ? 'sell' : 'buy',
+        ordertype: body.ordertype === 'limit' ? 'limit' : 'market',
+        volume,
+        price: body.price ? Number(body.price) : undefined,
+      });
+      sendJson(res, result.validated ? 200 : result.connected ? 400 : 503, result);
+    } catch (error) {
+      sendJson(res, 400, { error: String(error) });
+    }
+    return true;
+  }
+
   if (method === 'POST' && url === '/api/kraken/dca') {
     try {
       const body = await readJsonBody(req);

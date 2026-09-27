@@ -15,6 +15,7 @@ import {
   getEcosystemMetaRotation,
   calculateLeaderAmpelState
 } from '../utils/omegaLogic';
+import { getLiveSpot, LiveSymbol } from '../utils/liveSpot';
 
 interface SymbolAmpelProps {
   onLogEvent?: (message: string, level: 'info' | 'warn' | 'error' | 'success', node?: string) => void;
@@ -97,6 +98,24 @@ export default function SymbolAmpel({ onLogEvent, className = '' }: SymbolAmpelP
     return () => clearInterval(timer);
   }, [handleForceRotation]);
 
+  // Re-sync prices from the live feed (polled every 10s by liveSpot) so the
+  // Ampel never drifts away from the Kraken/CoinGecko quote stream. Without
+  // this, priceUSD was snapshotted once at mount and went stale within
+  // seconds while other panels kept streaming.
+  useEffect(() => {
+    const resync = () => {
+      setLeaders(prevLeaders =>
+        prevLeaders.map(leader => ({
+          ...leader,
+          priceUSD: getLiveSpot(leader.symbol as LiveSymbol, leader.priceUSD)
+        }))
+      );
+    };
+    resync();
+    const id = setInterval(resync, 10_000);
+    return () => clearInterval(id);
+  }, []);
+
   // Live order flow micro-fluctuation simulation (when liveStreamActive)
   useEffect(() => {
     if (!liveStreamActive) return;
@@ -104,16 +123,14 @@ export default function SymbolAmpel({ onLogEvent, className = '' }: SymbolAmpelP
     const streamInterval = setInterval(() => {
       setLeaders(prevLeaders => {
         return prevLeaders.map(leader => {
-          // Add micro random fluctuations to rvol, cosPhi, and price
+          // Add micro random fluctuations to rvol, cosPhi. Price is NOT
+          // jittered here — it comes from the live feed (getLiveSpot), and
+          // faking a random walk on top would corrupt the real quote.
           const rvolDelta = (Math.random() - 0.49) * 0.08;
           const newRvol = Math.max(0.4, Number((leader.rvol5m + rvolDelta).toFixed(2)));
 
           const cosPhiDelta = (Math.random() - 0.48) * 0.02;
           const newCosPhi = Math.max(-0.4, Math.min(0.99, Number((leader.cosPhi + cosPhiDelta).toFixed(2))));
-
-          const priceDeltaPercent = (Math.random() - 0.49) * 0.003;
-          const basePrice = leader.priceUSD || 100;
-          const newPrice = Number((basePrice * (1 + priceDeltaPercent)).toFixed(basePrice > 100 ? 1 : 3));
 
           // Calculate normalized metaScore according to OMEGA Blueprint §8
           const w1 = 0.25, w2 = 0.25, w3 = 0.25, w4 = 0.25;
@@ -134,7 +151,6 @@ export default function SymbolAmpel({ onLogEvent, className = '' }: SymbolAmpelP
             ...leader,
             rvol5m: newRvol,
             cosPhi: newCosPhi,
-            priceUSD: newPrice,
             metaScore: newScore,
             lampState: newLampState,
             tradeStatus,
@@ -718,7 +734,7 @@ export default function SymbolAmpel({ onLogEvent, className = '' }: SymbolAmpelP
 
       {/* ── TRADING BOT STATS POPUP TEMPLATE (MIT INTEGRIERTEM AMPELSYSTEM) ── */}
       {inspectorOpen && selectedLeader && (() => {
-        const curPrice = selectedLeader.priceUSD || (selectedLeader.symbol === 'BTC' ? 64200 : selectedLeader.symbol === 'ETH' ? 2450 : selectedLeader.symbol === 'SOL' ? 142 : 41.25);
+        const curPrice = selectedLeader.priceUSD || getLiveSpot(selectedLeader.symbol as LiveSymbol, selectedLeader.symbol === 'BTC' ? 64200 : selectedLeader.symbol === 'ETH' ? 2450 : selectedLeader.symbol === 'SOL' ? 142 : 41.25);
         const changePct = selectedLeader.change24h !== undefined ? selectedLeader.change24h : 5.2;
         const isProfit = changePct >= 0 && selectedLeader.lampState !== 'RED_GLOW';
         

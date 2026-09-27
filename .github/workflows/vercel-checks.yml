@@ -1,0 +1,151 @@
+name: Vercel Deployment Checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: vercel-checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  typecheck:
+    name: Typecheck (tsc --noEmit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+  build:
+    name: Vercel build (vite build)
+    runs-on: ubuntu-latest
+    needs: typecheck
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build frontend (mirrors vercel.json buildCommand)
+        run: npx vite build
+
+      - name: Bundle Vercel API functions (mirrors buildCommand)
+        run: npm run build:api
+
+      - name: Verify API bundles
+        run: |
+          test -f api/_build/handler.cjs || { echo "api/_build/handler.cjs missing"; exit 1; }
+          node --check api/_build/handler.cjs
+          echo "API bundles OK"
+
+      - name: Verify build output
+        run: |
+          test -f dist/index.html || { echo "dist/index.html missing"; exit 1; }
+          ls dist/assets/*.js >/dev/null || { echo "no JS bundle emitted"; exit 1; }
+          echo "Build output OK"
+
+      - name: Verify Vercel API functions
+        run: |
+          test -f api/handler.js || { echo "api/handler.js missing"; exit 1; }
+          node --check api/handler.js
+          grep -q '"source": "/api/kraken/status", "destination": "/api/handler"' vercel.json \
+            || { echo "vercel.json must route /api/kraken/status through the shared handler"; exit 1; }
+          grep -q '"source": "/api/worker/dca", "destination": "/api/handler"' vercel.json \
+            || { echo "vercel.json must route /api/worker/dca through the shared handler"; exit 1; }
+          echo "API functions OK"
+
+      - name: Validate vercel.json
+        run: node -e "JSON.parse(require('fs').readFileSync('vercel.json','utf8')); console.log('vercel.json OK')"
+
+  smoke:
+    name: Smoke-test live deployment
+    runs-on: ubuntu-latest
+    needs: build
+    # Only meaningful for the deployed site after a main push
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Check production site serves a fresh bundle and live ticker
+        run: |
+          set -euo pipefail
+          SITE="https://ni-n.vercel.app"
+
+          # Vercel deploys take ~1-2 min; retry generously
+          for i in $(seq 1 30); do
+            HTML=$(curl -fsS "$SITE/" && break || true)
+            if [ -n "${HTML:-}" ]; then break; fi
+            sleep 10
+          done
+          test -n "${HTML:-}" || { echo "site did not respond"; exit 1; }
+
+          echo "$HTML" | grep -qE 'assets/index-[^"]+\.js' \
+            || { echo "no vite bundle reference in HTML"; exit 1; }
+
+          STATUS=$(curl -fsS "$SITE/api/kraken/status")
+          echo "$STATUS" | node -e "
+            let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{
+              const j=JSON.parse(d);
+              if(!j.ticker||!j.ticker.BTCUSD||typeof j.ticker.BTCUSD.last!=='number'){
+                console.error('ticker.BTCUSD.last missing or not a number');process.exit(1);
+              }
+              console.log('Live BTC ticker OK:',j.ticker.BTCUSD.last);
+            });"
+
+          # API routes served through api/handler.js (CJS shim over api/_build/handler.cjs; rewrites in vercel.json)
+          HEALTH=$(curl -fsS "$SITE/api/health")
+          echo "$HEALTH" | node -e "
+            let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{
+              const j=JSON.parse(d);
+              if(j.status!=='ok'){console.error('/api/health did not return status ok');process.exit(1);}
+              console.log('/api/health OK');
+            });"
+
+          PROVIDERS=$(curl -fsS "$SITE/api/ai/providers")
+          echo "$PROVIDERS" | node -e "
+            let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{
+              const j=JSON.parse(d);
+              if(!j.activeProvider||!Array.isArray(j.providers)||j.providers.length===0){
+                console.error('/api/ai/providers malformed');process.exit(1);
+              }
+              console.log('/api/ai/providers OK, active:',j.activeProvider);
+            });"
+
+          BOTS=$(curl -fsS "$SITE/api/bots")
+          echo "$BOTS" | node -e "
+            let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{
+              if(!Array.isArray(JSON.parse(d))){console.error('/api/bots did not return an array');process.exit(1);}
+              console.log('/api/bots OK');
+            });"
+
+          WORKER=$(curl -fsS "$SITE/api/worker/dca")
+          echo "$WORKER" | node -e "
+            let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{
+              const j=JSON.parse(d);
+              if(typeof j.ran!=='boolean'){console.error('/api/worker/dca malformed');process.exit(1);}
+              console.log('/api/worker/dca OK, ran:',j.ran,'reason:',j.reason||'-');
+            });"
+
+          PRICES=$(curl -fsS "$SITE/api/prices")
+          echo "$PRICES" | node -e "
+            let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{
+              const j=JSON.parse(d);
+              if(!j.prices||typeof j.prices.BTC!=='number'){console.error('/api/prices malformed: j.prices.BTC missing or not a number');process.exit(1);}
+              console.log('/api/prices OK, BTC:',j.prices.BTC,'source:',j.source||'-');
+            });"

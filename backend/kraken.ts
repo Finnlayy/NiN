@@ -24,6 +24,8 @@ export interface KrakenRecentOrder {
   price: string;
   status: 'FILLED' | 'PENDING' | 'CANCELLED' | 'REJECTED';
   venue: string;
+  /** Paper ledger that filled the order (absent for real Kraken Pro fills). */
+  workspace?: string;
 }
 
 type CliResult = {
@@ -36,6 +38,16 @@ type CliResult = {
 const CLI_TIMEOUT_MS = 20_000;
 
 const CLI_RELEASE = 'v0.4.1';
+
+/**
+ * Paper workspaces used when the real account has no funds: the CLI routes
+ * `order buy/sell` to a simulated ledger whenever KRAKEN_WORKSPACE points at
+ * a paper workspace (live Kraken prices, virtual balance, no real money).
+ * Every bot/limb gets its OWN workspace so strategies never share a ledger.
+ */
+const PAPER_WORKSPACE_PREFIX = 'nin-paper';
+
+const PAPER_STARTING_USD = 10000;
 
 function releaseAssetName(): string {
   return process.arch === 'arm64'
@@ -109,7 +121,7 @@ function quoteError(stderr: string, fallback: string): string {
   if (!text) {
     return fallback;
   }
-  return text.slice(0, 500);
+  return text.slice(0, 2000);
 }
 
 function tickerQuote(payload: unknown, hints: string[]): Record<string, unknown> | null {
@@ -137,6 +149,104 @@ function priceOf(quote: Record<string, unknown> | null): number | null {
   return Number.isFinite(price) && price > 0 ? price : null;
 }
 
+/**
+ * Deep-search a parsed Kraken CLI response for the first `txid` value
+ * (string or array) — the authoritative "Kraken accepted the order" signal.
+ */
+function findTxid(payload: unknown, depth = 0): string | null {
+  if (!payload || typeof payload !== 'object' || depth > 6) {
+    return null;
+  }
+  if (Array.isArray(payload)) {
+    for (const item of payload) {
+      const found = findTxid(item, depth + 1);
+      if (found) {
+        return found;
+      }
+    }
+    return null;
+  }
+  const record = payload as Record<string, unknown>;
+  const direct = record.txid;
+  if (typeof direct === 'string' && direct) {
+    return direct;
+  }
+  if (Array.isArray(direct) && direct.length > 0 && typeof direct[0] === 'string') {
+    return direct[0];
+  }
+  for (const value of Object.values(record)) {
+    if (value && typeof value === 'object') {
+      const found = findTxid(value, depth + 1);
+      if (found) {
+        return found;
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Deep-search for an error message (`error` / `errors` fields, string or
+ * array of strings). Kraken answers rejections both via non-zero exit codes
+ * and in-band error payloads.
+ */
+function findErrorMessage(payload: unknown, depth = 0): string | null {
+  if (!payload || typeof payload !== 'object' || depth > 6) {
+    return null;
+  }
+  const record = payload as Record<string, unknown>;
+  for (const key of ['error', 'errors']) {
+    const value = record[key];
+    if (typeof value === 'string' && value) {
+      return value.slice(0, 300);
+    }
+    if (Array.isArray(value) && value.length > 0 && typeof value[0] === 'string') {
+      return value.slice(0, 3).join(' | ').slice(0, 300);
+    }
+  }
+  for (const value of Object.values(record)) {
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      const found = findErrorMessage(value, depth + 1);
+      if (found) {
+        return found;
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Extract the human-readable order description ("buy 0.00100000 BTCUSD @
+ * market") from a Kraken CLI order response when present.
+ */
+function findDescription(payload: unknown, depth = 0): string | null {
+  if (!payload || typeof payload !== 'object' || depth > 6) {
+    return null;
+  }
+  const record = payload as Record<string, unknown>;
+  for (const key of ['descr', 'description']) {
+    const value = record[key];
+    if (typeof value === 'string' && value) {
+      return value.slice(0, 200);
+    }
+    if (value && typeof value === 'object') {
+      const nested = (value as Record<string, unknown>).order;
+      if (typeof nested === 'string' && nested) {
+        return nested.slice(0, 200);
+      }
+    }
+  }
+  for (const value of Object.values(record)) {
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      const found = findDescription(value, depth + 1);
+      if (found) {
+        return found;
+      }
+    }
+  }
+  return null;
+}
+
 function limb(name: string, pair: string, mode: string, online: boolean, interval?: string) {
   return {
     name,
@@ -155,6 +265,9 @@ export class KrakenOrderExecutor {
   private recentOrdersList: KrakenRecentOrder[] = [];
   private cliVersion: string | null = null;
   private preparing: Promise<string | null> | null = null;
+  // One Kraken paper workspace per bot/limb (key = workspace name) so each
+  // strategy keeps its own isolated virtual ledger.
+  private paperWorkspaces = new Map<string, Promise<boolean>>();
 
   constructor() {
     this.cliPath = this.resolveCliPath();
@@ -217,7 +330,7 @@ export class KrakenOrderExecutor {
     return Boolean(process.env.KRAKEN_API_KEY && process.env.KRAKEN_API_SECRET);
   }
 
-  private async runCli(args: string[]): Promise<CliResult> {
+  private async runCli(args: string[], extraEnv: NodeJS.ProcessEnv = {}): Promise<CliResult> {
     const cliPath = this.hasNativeCli() ? this.cliPath : null;
     if (!cliPath) {
       return {
@@ -229,18 +342,42 @@ export class KrakenOrderExecutor {
     }
 
     try {
+      // Trim credentials: values pasted into hosting dashboards frequently
+      // carry a trailing newline, which breaks the API-Key HTTP header
+      // ("failed to parse header value").
+      const env: NodeJS.ProcessEnv = { ...process.env, KRAKEN_LOG_FORMAT: 'compact', ...extraEnv };
+      if (typeof env.KRAKEN_API_KEY === 'string') {
+        env.KRAKEN_API_KEY = env.KRAKEN_API_KEY.trim();
+      }
+      if (typeof env.KRAKEN_API_SECRET === 'string') {
+        env.KRAKEN_API_SECRET = env.KRAKEN_API_SECRET.trim();
+      }
+      if (env.VERCEL === '1') {
+        // Vercel's filesystem is read-only outside /tmp; the CLI journals
+        // live trades under $HOME, which would fail with "Read-only file
+        // system (os error 30)".
+        env.HOME = '/tmp';
+      }
       const { stdout, stderr } = await execFileAsync(cliPath, args, {
         timeout: CLI_TIMEOUT_MS,
         maxBuffer: 2 * 1024 * 1024,
-        env: { ...process.env, KRAKEN_LOG_FORMAT: 'compact' },
+        env,
       });
       return { ok: true, stdout, stderr, code: 0 };
     } catch (err: unknown) {
-      const error = err as { stdout?: string; stderr?: string; message?: string; code?: number | string };
+      const error = err as { stdout?: string; stderr?: string; message?: string; code?: number | string; signal?: string };
+      const detail = [
+        error.stderr,
+        error.signal ? `signal=${error.signal}` : null,
+        typeof error.code === 'number' ? `exit=${error.code}` : error.code ? `code=${error.code}` : null,
+        error.message,
+      ]
+        .filter(Boolean)
+        .join(' | ');
       return {
         ok: false,
         stdout: error.stdout || '',
-        stderr: error.stderr || error.message || String(err),
+        stderr: detail || String(err),
         code: typeof error.code === 'number' ? error.code : null,
       };
     }
@@ -282,10 +419,13 @@ export class KrakenOrderExecutor {
     }
 
     const started = Date.now();
-    const [versionRun, statusRun, tickerRun] = await Promise.all([
+    const [versionRun, statusRun, tickerRun, paper] = await Promise.all([
       this.cliVersion ? Promise.resolve(null) : this.runCli(['--version']),
       this.runCli(['status', '-o', 'json']),
       this.runCli(['ticker', 'BTCUSD', 'SOLUSD', '-o', 'json']),
+      // Per-bot paper ledger balances — each workspace is created on first
+      // contact; failures degrade to available:false and never fail status.
+      this.paperLedgerStatus(),
     ]);
     const latencyMs = Date.now() - started;
 
@@ -359,6 +499,7 @@ export class KrakenOrderExecutor {
       cliVersion: this.cliVersion,
       system,
       ticker,
+      paper,
       limbs: {
         limb_1: limb('Swarm Limb 1 (Scout Node)', 'BTCUSD', 'Trigger Scout Tranche', true),
         limb_2: limb('Swarm Limb 2 (Pyramid Node)', 'BTCUSD', 'ATR Trailing Tranches', true),
@@ -367,6 +508,202 @@ export class KrakenOrderExecutor {
         limb_5: limb('Swarm Limb 5 (Sol Dca)', 'SOLUSD', 'High-Beta Dip Accumulation ($75)', true, 'Every 4h or Dip > -4.0%'),
       },
       recentOrders: this.recentOrdersList,
+    };
+  }
+
+  public getRecentOrders(): KrakenRecentOrder[] {
+    return this.recentOrdersList.slice();
+  }
+
+  private recordOrder(entry: KrakenRecentOrder): void {
+    this.recentOrdersList.unshift(entry);
+    if (this.recentOrdersList.length > 25) {
+      this.recentOrdersList.length = 25;
+    }
+  }
+
+  /**
+   * Create (once) a paper workspace that backs the no-funds fallback.
+   * Re-running against an existing workspace is tolerated, so warm instances
+   * simply re-attach to the ledger persisted under the CLI config dir.
+   * Each bot/limb uses its own workspace name for an isolated ledger.
+   */
+  private ensurePaperWorkspace(workspace: string): Promise<boolean> {
+    let ready = this.paperWorkspaces.get(workspace);
+    if (!ready) {
+      ready = (async () => {
+        await this.ensureCli();
+        if (!this.hasNativeCli()) {
+          return false;
+        }
+        const create = await this.runCli([
+          'workspace',
+          'create',
+          workspace,
+          '--capital',
+          String(PAPER_STARTING_USD),
+          '--mode',
+          'paper',
+          '-o',
+          'json',
+        ]);
+        // Any failure other than "already exists" is retried next time by
+        // dropping the memoized promise.
+        if (!create.ok && !/exists/i.test(create.stderr + create.stdout)) {
+          this.paperWorkspaces.delete(workspace);
+          return false;
+        }
+        return true;
+      })();
+      this.paperWorkspaces.set(workspace, ready);
+    }
+    return ready;
+  }
+
+  /**
+   * Which paper ledger a limb trades on. Limbs 4/5 (the DCA bots) get their
+   * own dedicated workspaces; anything else falls back to a slug of the limb
+   * name, and unknown/manual orders share a default ledger.
+   */
+  private paperWorkspaceFor(limbContext?: { limb: number; name: string }, limbName = ''): string {
+    if (limbContext && (limbContext.limb === 4 || limbContext.limb === 5)) {
+      return `${PAPER_WORKSPACE_PREFIX}-limb-${limbContext.limb}`;
+    }
+    const raw = (limbContext?.name || limbName || '').trim();
+    // Manual/unknown dispatches are not a bot — they share the default ledger.
+    if (!raw || /unknown/i.test(raw)) {
+      return `${PAPER_WORKSPACE_PREFIX}-default`;
+    }
+    const slug = raw
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 30);
+    return slug ? `${PAPER_WORKSPACE_PREFIX}-${slug}` : `${PAPER_WORKSPACE_PREFIX}-default`;
+  }
+
+  /**
+   * Balances of every known paper ledger (per-bot virtual accounts). Creates
+   * the standard set on first contact; failures degrade to available:false
+   * and never fail the whole status call.
+   */
+  private async paperLedgerStatus(): Promise<Record<string, unknown>> {
+    const targets = new Set<string>([
+      `${PAPER_WORKSPACE_PREFIX}-limb-4`,
+      `${PAPER_WORKSPACE_PREFIX}-limb-5`,
+      `${PAPER_WORKSPACE_PREFIX}-default`,
+      ...this.paperWorkspaces.keys(),
+    ]);
+    const entries = await Promise.all(
+      [...targets].map(async (workspace) => {
+        const ok = await this.ensurePaperWorkspace(workspace);
+        if (!ok) {
+          return [workspace, { available: false }] as const;
+        }
+        const run = await this.runCli(['balance', '-o', 'json'], { KRAKEN_WORKSPACE: workspace });
+        if (!run.ok) {
+          return [workspace, { available: false }] as const;
+        }
+        let balances: unknown = null;
+        try {
+          balances = parseJson(run.stdout);
+        } catch {
+          balances = null;
+        }
+        return [workspace, { available: true, balances }] as const;
+      })
+    );
+    return { workspaces: Object.fromEntries(entries) };
+  }
+
+  /**
+   * Execute an order against the paper ledger (same args as a live order —
+   * the CLI routes it because KRAKEN_WORKSPACE scopes the invocation to the
+   * paper workspace).
+   */
+  private async executePaperOrder(
+    args: string[],
+    req: KrakenOrderRequest,
+    limbName: string,
+    limbContext?: { limb: 4 | 5; name: string }
+  ): Promise<Record<string, unknown>> {
+    const timestamp = new Date().toISOString();
+    // Every bot gets its own paper sub-account so ledgers stay isolated.
+    const workspace = this.paperWorkspaceFor(limbContext, limbName);
+    const ready = await this.ensurePaperWorkspace(workspace);
+    if (!ready) {
+      return {
+        success: false,
+        connected: false,
+        paper: true,
+        workspace,
+        error: `PAPER_UNAVAILABLE: paper workspace ${workspace} could not be initialized.`,
+        status: 'REJECTED',
+        pair: req.pair,
+        type: req.type,
+        volume: req.volume,
+        limb: limbName,
+        timestamp,
+      };
+    }
+
+    const result = await this.runCli(args, { KRAKEN_WORKSPACE: workspace });
+    let parsed: unknown;
+    try {
+      parsed = parseJson(result.stdout);
+    } catch {
+      parsed = { raw: result.stdout };
+    }
+
+    if (!result.ok) {
+      return {
+        success: false,
+        connected: true,
+        paper: true,
+        workspace,
+        error: `Paper ledger rejected the order. ${[
+          (result.stdout || '').replace(/\s+/g, ' ').trim().slice(0, 1000) || null,
+          quoteError(result.stderr, '') || null,
+        ].filter(Boolean).join(' | stderr: ') || 'No CLI output.'}`,
+        status: 'REJECTED',
+        pair: req.pair,
+        type: req.type,
+        volume: req.volume,
+        limb: limbName,
+        timestamp,
+        kraken: parsed,
+      };
+    }
+
+    const paperTxid = findTxid(parsed) ?? `paper-${Date.now()}`;
+    this.recordOrder({
+      id: paperTxid,
+      time: timestamp,
+      limb: limbName,
+      type: req.type === 'sell' ? 'SELL' : 'BUY',
+      pair: req.pair,
+      volume: String(req.volume),
+      price: req.price !== undefined ? String(req.price) : 'market',
+      status: 'FILLED',
+      venue: 'Kraken Paper',
+      workspace,
+    });
+
+    return {
+      success: true,
+      connected: true,
+      paper: true,
+      venue: 'Kraken Paper',
+      workspace,
+      limb: limbName,
+      status: 'FILLED',
+      txid: paperTxid,
+      descr: findDescription(parsed),
+      pair: req.pair,
+      type: req.type,
+      volume: req.volume,
+      timestamp,
+      kraken: parsed,
     };
   }
 
@@ -407,17 +744,47 @@ export class KrakenOrderExecutor {
     }
 
     const result = await this.runCli(args);
+    const timestamp = new Date().toISOString();
+
     if (!result.ok) {
+      const channels = `${result.stdout} ${result.stderr}`;
+      // No funds on the real account: degrade to the Kraken paper ledger so
+      // the DCA strategy keeps executing against live prices (virtual money,
+      // honestly tagged as PAPER in the UI).
+      if (/insufficient funds/i.test(channels)) {
+        const paperResult = await this.executePaperOrder(args, req, limbName, limbContext);
+        return {
+          ...paperResult,
+          realAccountError: 'EOrder:Insufficient funds',
+          note: 'Real account underfunded — order executed on the limb\'s Kraken paper ledger instead.',
+        };
+      }
+      this.recordOrder({
+        id: `rejected-${Date.now()}`,
+        time: timestamp,
+        limb: limbName,
+        type: side === 'sell' ? 'SELL' : 'BUY',
+        pair: req.pair,
+        volume: String(req.volume),
+        price: req.price !== undefined ? String(req.price) : 'market',
+        status: 'REJECTED',
+        venue: 'Kraken Pro',
+      });
       return {
         success: false,
         connected: true,
-        error: `Kraken CLI rejected the order. ${quoteError(result.stderr, result.stdout || 'No CLI output.')}`,
+        // Kraken's error envelope is JSON on STDOUT; stderr may only carry the
+        // "live: this goes to the real Kraken account" warning. Surface both.
+        error: `Kraken CLI rejected the order. ${[
+          (result.stdout || '').replace(/\s+/g, ' ').trim().slice(0, 1000) || null,
+          quoteError(result.stderr, '') || null,
+        ].filter(Boolean).join(' | stderr: ') || 'No CLI output.'}`,
         status: 'REJECTED',
         pair: req.pair,
         type: req.type,
         volume: req.volume,
         limb: limbName,
-        timestamp: new Date().toISOString(),
+        timestamp,
       };
     }
 
@@ -428,11 +795,143 @@ export class KrakenOrderExecutor {
       parsed = { raw: result.stdout };
     }
 
+    // A zero exit code alone does NOT mean Kraken accepted the order — the
+    // authoritative acceptance signal is a txid in the response payload.
+    const txid = findTxid(parsed);
+    const inBandError = findErrorMessage(parsed);
+    const descr = findDescription(parsed);
+
+    if (!txid) {
+      const reason = inBandError || 'Kraken response contained no txid; order was NOT accepted.';
+      this.recordOrder({
+        id: `rejected-${Date.now()}`,
+        time: timestamp,
+        limb: limbName,
+        type: side === 'sell' ? 'SELL' : 'BUY',
+        pair: req.pair,
+        volume: String(req.volume),
+        price: req.price !== undefined ? String(req.price) : 'market',
+        status: 'REJECTED',
+        venue: 'Kraken Pro',
+      });
+      return {
+        success: false,
+        connected: true,
+        error: reason,
+        status: 'REJECTED',
+        pair: req.pair,
+        type: req.type,
+        volume: req.volume,
+        limb: limbName,
+        timestamp,
+        kraken: parsed,
+      };
+    }
+
+    this.recordOrder({
+      id: txid,
+      time: timestamp,
+      limb: limbName,
+      type: side === 'sell' ? 'SELL' : 'BUY',
+      pair: req.pair,
+      volume: String(req.volume),
+      price: req.price !== undefined ? String(req.price) : 'market',
+      // Market orders on Kraken either fill immediately or report the open
+      // state; without a follow-up query-orders round-trip, PENDING is the
+      // honest label until proven filled.
+      status: req.ordertype === 'market' ? 'FILLED' : 'PENDING',
+      venue: 'Kraken Pro',
+    });
+
     return {
       success: true,
       connected: true,
       limb: limbName,
-      ...(parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : { raw: result.stdout }),
+      status: req.ordertype === 'market' ? 'FILLED' : 'PENDING',
+      txid,
+      descr,
+      pair: req.pair,
+      type: req.type,
+      volume: req.volume,
+      timestamp,
+      kraken: parsed,
+    };
+  }
+
+  /**
+   * Dry-run an order against Kraken (`kraken order ... --validate`): Kraken
+   * authenticates the request, checks permissions, balance and order
+   * parameters, and returns its real answer WITHOUT placing the order.
+   */
+  async validateOrder(req: KrakenOrderRequest): Promise<Record<string, unknown>> {
+    await this.ensureCli();
+    if (!this.hasNativeCli() || !this.cliPath) {
+      return {
+        validated: false,
+        connected: false,
+        error: 'NO_KRAKEN_CONNECTION: Kraken CLI binary not found.',
+      };
+    }
+    if (!this.hasApiCredentials()) {
+      return {
+        validated: false,
+        connected: true,
+        error: 'NO_CREDENTIALS: KRAKEN_API_KEY / KRAKEN_API_SECRET missing.',
+      };
+    }
+
+    const side = req.type === 'sell' ? 'sell' : 'buy';
+    const args = [
+      'order',
+      side,
+      req.pair,
+      String(req.volume),
+      '--type',
+      req.ordertype,
+      '--validate',
+      '-o',
+      'json',
+      '--yes',
+    ];
+    if (req.price !== undefined) {
+      args.push('--price', String(req.price));
+    }
+
+    const result = await this.runCli(args);
+    if (!result.ok) {
+      return {
+        validated: false,
+        connected: true,
+        error: quoteError(result.stderr, 'Kraken CLI rejected the validation request.'),
+        stderrTail: quoteError(result.stderr, ''),
+        timestamp: new Date().toISOString(),
+      };
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = parseJson(result.stdout);
+    } catch {
+      parsed = { raw: result.stdout };
+    }
+    const txid = findTxid(parsed);
+    const errorMessage = findErrorMessage(parsed);
+    // Kraken signals a successful --validate with status "validated" and no
+    // txid (no order is placed); a live placement signals with a txid.
+    const statusField =
+      parsed && typeof parsed === 'object' && typeof (parsed as Record<string, unknown>).status === 'string'
+        ? ((parsed as Record<string, unknown>).status as string)
+        : null;
+    const validated = !errorMessage && (statusField === 'validated' || Boolean(txid));
+    return {
+      validated,
+      connected: true,
+      txid,
+      krakenStatus: statusField,
+      descr: findDescription(parsed),
+      error: errorMessage ?? (validated ? null : 'Kraken neither validated the order nor returned a txid.'),
+      kraken: parsed,
+      timestamp: new Date().toISOString(),
     };
   }
 
@@ -455,11 +954,18 @@ export class KrakenOrderExecutor {
 
     const result = await this.runCli(parts);
     if (!result.ok) {
+      // Kraken answers errors as JSON on STDOUT with a non-zero exit code —
+      // stderr may only carry the debug request line. Surface both channels.
+      const stderrText = quoteError(result.stderr, '');
+      const stdoutText = (result.stdout || '').replace(/\s+/g, ' ').trim().slice(0, 1500);
+      const detail = stdoutText
+        ? stdoutText + (stderrText ? ` || stderr: ${stderrText}` : '')
+        : stderrText || 'command failed';
       return {
         success: false,
         connected: true,
         command: trimmed,
-        error: `Kraken CLI Error: ${quoteError(result.stderr, result.stdout || 'command failed')}`,
+        error: `Kraken CLI Error: ${detail}`,
       };
     }
 
@@ -473,6 +979,28 @@ export class KrakenOrderExecutor {
       };
     } catch {
       return { success: true, connected: true, command: trimmed, raw: result.stdout };
+    }
+  }
+
+  /**
+   * Last traded price for a pair via the Kraken CLI, or null when the
+   * ticker is unavailable. Used by the automatic DCA worker.
+   */
+  async getSpotPrice(pair: string): Promise<number | null> {
+    await this.ensureCli();
+    if (!this.hasNativeCli()) {
+      return null;
+    }
+    const tickerRun = await this.runCli(['ticker', pair, '-o', 'json']);
+    if (!tickerRun.ok) {
+      return null;
+    }
+    try {
+      const parsed = parseJson(tickerRun.stdout);
+      const hints = pair.includes('BTC') ? ['XXBTZUSD', 'XBTUSD', 'BTCUSD'] : [pair];
+      return priceOf(tickerQuote(parsed, hints));
+    } catch {
+      return null;
     }
   }
 

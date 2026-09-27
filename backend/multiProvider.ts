@@ -2,8 +2,37 @@ import { NeuralCoreAdapter, WrappedPrompt, NeuralCoreResponse } from '../src/typ
 import { GeminiCoreAdapter } from './gemini';
 import { LMStudioCoreAdapter, LMStudioConfig } from './lmStudio';
 import { OneProviderCoreAdapter, OneProviderConfig } from './oneProvider';
+import { readFileSync, writeFileSync, existsSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
 
 export type AIProviderId = 'gemini' | 'lm_studio' | 'oneprovider';
+
+// On Vercel the deployment filesystem is read-only except /tmp, so the
+// selection is persisted there to survive warm-instance restarts.
+const SELECTION_FILE = join(process.env.VERCEL === '1' ? tmpdir() : process.cwd(), 'neural-core-provider.json');
+
+function loadPersistedSelection(): AIProviderId | null {
+  try {
+    if (existsSync(SELECTION_FILE)) {
+      const parsed = JSON.parse(readFileSync(SELECTION_FILE, 'utf-8'));
+      if (parsed && (parsed.active === 'gemini' || parsed.active === 'lm_studio' || parsed.active === 'oneprovider')) {
+        return parsed.active;
+      }
+    }
+  } catch {
+    /* ignore unreadable state */
+  }
+  return null;
+}
+
+function persistSelection(id: AIProviderId): void {
+  try {
+    writeFileSync(SELECTION_FILE, JSON.stringify({ active: id }), 'utf-8');
+  } catch {
+    /* read-only filesystem: in-memory selection still works */
+  }
+}
 
 export interface AIProviderInfo {
   id: AIProviderId;
@@ -19,7 +48,7 @@ export interface AIProviderInfo {
 }
 
 export class MultiProviderNeuralCore implements NeuralCoreAdapter {
-  private activeProviderId: AIProviderId = 'gemini'; // Default: Gemini is active
+  private activeProviderId: AIProviderId = loadPersistedSelection() ?? 'gemini'; // Default: Gemini is active
   private geminiAdapter: GeminiCoreAdapter;
   private lmStudioAdapter: LMStudioCoreAdapter;
   private oneProviderAdapter: OneProviderCoreAdapter;
@@ -39,6 +68,7 @@ export class MultiProviderNeuralCore implements NeuralCoreAdapter {
       throw new Error(`Unknown AI provider: ${id}`);
     }
     this.activeProviderId = id;
+    persistSelection(id);
   }
 
   public getLmStudioAdapter(): LMStudioCoreAdapter {

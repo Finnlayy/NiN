@@ -5,6 +5,7 @@ import {
   AlertCircle
 } from 'lucide-react';
 import { TradingBot } from '../types';
+import { getLiveSpot } from '../utils/liveSpot';
 
 interface CreateBotModalProps {
   isOpen: boolean;
@@ -13,11 +14,11 @@ interface CreateBotModalProps {
 }
 
 const PRESET_PAIRS = [
-  { pair: 'HYPE/USDT.P', venue: 'Pionex Futures', defaultPrice: 42.50, defaultRange: [39, 46], defaultLev: 75 },
-  { pair: 'BTC/USD.P', venue: 'Kraken Pro Perpetual', defaultPrice: 64800, defaultRange: [61000, 69000], defaultLev: 10 },
-  { pair: 'SOL/USD.P', venue: 'Kraken Pro Futures', defaultPrice: 142.50, defaultRange: [128, 158], defaultLev: 20 },
-  { pair: 'ETH/USD.P', venue: 'Kraken Pro Perpetual', defaultPrice: 3450, defaultRange: [3200, 3750], defaultLev: 15 },
-  { pair: 'SUI/USDT.P', venue: 'Pionex Futures', defaultPrice: 1.95, defaultRange: [1.70, 2.20], defaultLev: 50 },
+  { pair: 'HYPE/USDT.P', venue: 'Pionex Futures', defaultPrice: getLiveSpot('HYPE', 93), defaultRange: [39, 46], defaultLev: 75 },
+  { pair: 'BTC/USD.P', venue: 'Kraken Pro Perpetual', defaultPrice: getLiveSpot('BTC', 84500), defaultRange: [61000, 69000], defaultLev: 10 },
+  { pair: 'SOL/USD.P', venue: 'Kraken Pro Futures', defaultPrice: getLiveSpot('SOL', 121), defaultRange: [128, 158], defaultLev: 20 },
+  { pair: 'ETH/USD.P', venue: 'Kraken Pro Perpetual', defaultPrice: getLiveSpot('ETH', 2705), defaultRange: [3200, 3750], defaultLev: 15 },
+  { pair: 'SUI/USDT.P', venue: 'Pionex Futures', defaultPrice: getLiveSpot('SUI', 1.18), defaultRange: [1.70, 2.20], defaultLev: 50 },
 ];
 
 export default function CreateBotModal({ isOpen, onClose, onCreateBot }: CreateBotModalProps) {

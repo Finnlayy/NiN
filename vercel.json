@@ -1,21 +1,40 @@
 {
   "framework": "vite",
-  "buildCommand": "vite build",
+  "buildCommand": "vite build && npm run build:api",
   "outputDirectory": "dist",
   "functions": {
-    "api/kraken/status.js": {
+    "api/handler.js": {
       "maxDuration": 60
-    },
-    "api/handler.ts": {
-      "maxDuration": 300
     }
   },
   "rewrites": [
-    { "source": "/api/kraken/:action((?!status).*)", "destination": "/api/handler" },
-    { "source": "/api/:first((?!kraken).*)", "destination": "/api/handler" },
-    { "source": "/api/:first((?!kraken).*)/:rest*", "destination": "/api/handler" },
+    { "source": "/api/kraken/status", "destination": "/api/handler" },
+    { "source": "/api/kraken/dca", "destination": "/api/handler" },
+    { "source": "/api/kraken/test-order", "destination": "/api/handler" },
+    { "source": "/api/kraken/orders", "destination": "/api/handler" },
+    { "source": "/api/kraken/orders/:path*", "destination": "/api/handler" },
+    { "source": "/api/execute-kraken", "destination": "/api/handler" },
+    { "source": "/api/execute-order", "destination": "/api/handler" },
+    { "source": "/api/health", "destination": "/api/handler" },
+    { "source": "/api/ai/providers", "destination": "/api/handler" },
+    { "source": "/api/ai/provider/select", "destination": "/api/handler" },
+    { "source": "/api/ai/provider/test", "destination": "/api/handler" },
+    { "source": "/api/ai/provider/config", "destination": "/api/handler" },
+    { "source": "/api/bots", "destination": "/api/handler" },
+    { "source": "/api/bots/:path*", "destination": "/api/handler" },
+    { "source": "/api/prices", "destination": "/api/handler" },
+    { "source": "/api/prices/:path*", "destination": "/api/handler" },
+    { "source": "/api/worker/dca", "destination": "/api/handler" },
+    { "source": "/api/worker/dca/:path*", "destination": "/api/handler" },
+    { "source": "/api/connect/github", "destination": "/api/handler" },
+    { "source": "/api/architect/status", "destination": "/api/handler" },
+    { "source": "/api/learning", "destination": "/api/handler" },
+    { "source": "/api/learning/:path*", "destination": "/api/handler" },
     { "source": "/learning", "destination": "/api/handler" },
-    { "source": "/learning/(.*)", "destination": "/api/handler" },
-    { "source": "/(.*)", "destination": "/index.html" }
+    { "source": "/learning/:path*", "destination": "/api/handler" },
+    { "source": "/api/kernel/:path*", "destination": "/api/handler" },
+    { "source": "/api/telemetry/:path*", "destination": "/api/handler" },
+    { "source": "/api/omega/:path*", "destination": "/api/handler" },
+    { "source": "/api/task", "destination": "/api/handler" }
   ]
 }

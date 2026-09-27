@@ -19,6 +19,7 @@ import {
   Target
 } from 'lucide-react';
 import { ViaNegativaState, GravityFieldState } from '../utils/omegaLogic';
+import { getLiveSpot } from '../utils/liveSpot';
 
 export interface GravityFieldVisualizerProps {
   spotPrice?: number;
@@ -43,7 +44,7 @@ interface PotentialPoint {
 }
 
 export default function GravityFieldVisualizer({
-  spotPrice = 64280,
+  spotPrice = getLiveSpot('BTC', 64280),
   gravityField,
   viaNegativa,
   onParametersChange,

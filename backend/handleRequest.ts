@@ -19,6 +19,7 @@ import {
 import { kernelEngine } from './kernel';
 import { engineTelemetryHub } from './telemetryEngine';
 import { botRegistry } from './bots';
+import { handlePricesRequest } from './prices';
 import { fetchGitHubUser } from './connect';
 
 const krakenExecutor = new KrakenOrderExecutor();
@@ -160,6 +161,11 @@ export async function handleRequest(req: IncomingMessage, res: ServerResponse): 
 
     if (method === 'GET' && url === '/api/health') {
       sendJson(res, 200, { status: 'ok', service: 'neural-orchestrator', omega_engine: 'CANONICAL-1.0', learning_subsystem: 'ACTIVE' });
+      return true;
+    }
+
+    if (method === 'GET' && (url === '/api/prices' || url === '/api/prices/')) {
+      await handlePricesRequest(req, res);
       return true;
     }
 
@@ -445,7 +451,7 @@ export async function handleRequest(req: IncomingMessage, res: ServerResponse): 
     }
 
     if (method === 'GET' && url === '/api/bots') {
-      const bots = botRegistry.getAll();
+      const bots = await botRegistry.getAllWithLivePrices();
       sendJson(res, 200, bots);
       return true;
     }

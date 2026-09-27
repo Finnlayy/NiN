@@ -1,5 +1,7 @@
 import { writeFileSync, readFileSync, existsSync } from 'fs';
 import { join } from 'path';
+import { tmpdir } from 'os';
+import { getLivePrices } from './prices';
 
 export interface TradingBot {
   id: string;
@@ -48,7 +50,9 @@ export interface TradingBot {
   lastUpdated: string;
 }
 
-const STORAGE_PATH = join(process.cwd(), 'data', 'bots.json');
+const STORAGE_PATH = process.env.VERCEL === '1'
+  ? join(tmpdir(), 'nin-bots.json')
+  : join(process.cwd(), 'data', 'bots.json');
 
 class BotRegistry {
   private bots: Map<string, TradingBot> = new Map();
@@ -82,21 +86,21 @@ class BotRegistry {
         direction: 'LONG',
         leverage: 75,
         status: 'ACTIVE',
-        entryPrice: 41.250,
-        currentPrice: 43.120,
-        unrealizedPnlUsd: 12.84,
-        unrealizedPnlPercent: 25.38,
+        entryPrice: 92.690,
+        currentPrice: 93.000,
+        unrealizedPnlUsd: 12.60,
+        unrealizedPnlPercent: 25.00,
         investmentUsd: 50.58,
         investmentEur: 45.00,
         realizedProfitUsd: 8.42,
         realizedProfitLabel: 'Realisiert (Zyklus)',
-        dcaRangeMin: 39,
-        dcaRangeMax: 44,
+        dcaRangeMin: 88.50,
+        dcaRangeMax: 97.70,
         dcaLevels: 160,
         dcaOrdersTriggered: 247,
         fundingFeesUsd: -1.14,
-        liquidationPrice: 41.15,
-        liquidationDistancePercent: -0.83,
+        liquidationPrice: 91.450,
+        liquidationDistancePercent: -1.67,
         startedAt: new Date(Date.now() - 3.6 * 86400000).toISOString(),
         runtimeDisplay: '03d 14h 22m',
         cycles: 62,
@@ -115,21 +119,21 @@ class BotRegistry {
         direction: 'LONG',
         leverage: 10,
         status: 'ACTIVE',
-        entryPrice: 63850.00,
-        currentPrice: 64920.50,
+        entryPrice: 83066.00,
+        currentPrice: 84561.00,
         unrealizedPnlUsd: 142.50,
-        unrealizedPnlPercent: 18.25,
+        unrealizedPnlPercent: 18.00,
         investmentUsd: 750.00,
         investmentEur: 690.00,
         realizedProfitUsd: 84.60,
         realizedProfitLabel: 'Realisiert (Axiom 5)',
-        dcaRangeMin: 60000,
-        dcaRangeMax: 68000,
+        dcaRangeMin: 80000,
+        dcaRangeMax: 87000,
         dcaLevels: 24,
         dcaOrdersTriggered: 18,
         fundingFeesUsd: -4.30,
-        liquidationPrice: 57460.00,
-        liquidationDistancePercent: -11.45,
+        liquidationPrice: 74760.00,
+        liquidationDistancePercent: -11.59,
         startedAt: new Date(Date.now() - 5.2 * 86400000).toISOString(),
         runtimeDisplay: '05d 04h 11m',
         cycles: 28,
@@ -148,21 +152,21 @@ class BotRegistry {
         direction: 'LONG',
         leverage: 20,
         status: 'ACTIVE',
-        entryPrice: 138.40,
-        currentPrice: 145.80,
+        entryPrice: 119.510,
+        currentPrice: 121.420,
         unrealizedPnlUsd: 64.20,
-        unrealizedPnlPercent: 32.10,
+        unrealizedPnlPercent: 32.00,
         investmentUsd: 200.00,
         investmentEur: 185.00,
         realizedProfitUsd: 41.80,
         realizedProfitLabel: 'Realisiert (Zyklus)',
-        dcaRangeMin: 125,
-        dcaRangeMax: 155,
+        dcaRangeMin: 112,
+        dcaRangeMax: 130,
         dcaLevels: 40,
         dcaOrdersTriggered: 32,
         fundingFeesUsd: -2.15,
-        liquidationPrice: 131.50,
-        liquidationDistancePercent: -9.80,
+        liquidationPrice: 113.530,
+        liquidationDistancePercent: -6.50,
         startedAt: new Date(Date.now() - 2.8 * 86400000).toISOString(),
         runtimeDisplay: '02d 19h 45m',
         cycles: 44,
@@ -181,21 +185,21 @@ class BotRegistry {
         direction: 'LONG',
         leverage: 50,
         status: 'ACTIVE',
-        entryPrice: 1.842,
-        currentPrice: 1.984,
+        entryPrice: 1.1818,
+        currentPrice: 1.2000,
         unrealizedPnlUsd: 38.60,
-        unrealizedPnlPercent: 77.20,
+        unrealizedPnlPercent: 77.00,
         investmentUsd: 50.00,
         investmentEur: 46.20,
         realizedProfitUsd: 19.40,
         realizedProfitLabel: 'Realisiert (GPM Delta-T)',
-        dcaRangeMin: 1.70,
-        dcaRangeMax: 2.10,
+        dcaRangeMin: 1.12,
+        dcaRangeMax: 1.28,
         dcaLevels: 80,
         dcaOrdersTriggered: 64,
         fundingFeesUsd: -0.85,
-        liquidationPrice: 1.805,
-        liquidationDistancePercent: -8.90,
+        liquidationPrice: 1.1582,
+        liquidationDistancePercent: -3.48,
         startedAt: new Date(Date.now() - 1.1 * 86400000).toISOString(),
         runtimeDisplay: '01d 02h 18m',
         cycles: 19,
@@ -224,6 +228,35 @@ class BotRegistry {
 
   public getAll(): TradingBot[] {
     return Array.from(this.bots.values());
+  }
+
+  /**
+   * getAll() with each bot's currentPrice refreshed from the live CoinGecko
+   * feed, and unrealized PnL recomputed proportionally from entryPrice,
+   * investmentUsd and leverage. Pair base symbol is matched to the price map
+   * (e.g. HYPE/USDT.P -> HYPE); unknown pairs pass through unchanged.
+   */
+  public async getAllWithLivePrices(): Promise<TradingBot[]> {
+    const { prices } = await getLivePrices();
+    return this.getAll().map(bot => {
+      const base = bot.pair.split('/')[0]?.toUpperCase();
+      const livePrice = base ? prices[base] : undefined;
+      if (typeof livePrice !== 'number' || !Number.isFinite(livePrice) || livePrice <= 0 || bot.entryPrice <= 0) {
+        return bot;
+      }
+      const currentPrice = Number(livePrice.toFixed(livePrice > 100 ? 2 : 4));
+      const priceChange = (currentPrice - bot.entryPrice) / bot.entryPrice;
+      const directionMultiplier = bot.direction === 'LONG' ? 1 : -1;
+      const unrealizedPnlPercent = Number((priceChange * bot.leverage * directionMultiplier * 100).toFixed(2));
+      const unrealizedPnlUsd = Number(((bot.investmentUsd * unrealizedPnlPercent) / 100).toFixed(2));
+      return {
+        ...bot,
+        currentPrice,
+        unrealizedPnlUsd,
+        unrealizedPnlPercent,
+        lastUpdated: new Date().toLocaleTimeString('de-DE'),
+      };
+    });
   }
 
   public getById(id: string): TradingBot | undefined {

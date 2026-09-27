@@ -1,10 +1,11 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import {
   TrendingUp,
   Search,
   Zap
 } from 'lucide-react';
 import { SymbolLampState } from '../../utils/omegaLogic';
+import { getLiveSpot } from '../../utils/liveSpot';
 
 export interface EcosystemToken {
   symbol: string;
@@ -37,6 +38,15 @@ export default function SymbolAmpelMatrix({
   const [searchQuery, setSearchQuery] = useState('');
   const [inspectToken, setInspectToken] = useState<EcosystemToken | null>(null);
 
+  // Re-render on every live-feed poll (10s), not just the first warm tick,
+  // so prices stay in sync with the Kraken/CoinGecko stream instead of
+  // freezing at the first tick that replaced the fallbacks.
+  const [liveSpotTick, setLiveSpotTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setLiveSpotTick(t => t + 1), 10_000);
+    return () => clearInterval(id);
+  }, []);
+
   // Canonical token list based on OMEGA-BLUEPRINT §8
   const tokens: EcosystemToken[] = useMemo(() => [
     {
@@ -51,7 +61,7 @@ export default function SymbolAmpelMatrix({
       metaScore: 2.85,
       lampState: 'GREEN_GLOW',
       isLeader: true,
-      priceUSD: 3.42,
+      priceUSD: getLiveSpot('SUI', 1.18),
       change24h: 14.8,
       tradeStatus: 'ACTIVE_PYRAMID',
     },
@@ -67,7 +77,7 @@ export default function SymbolAmpelMatrix({
       metaScore: 2.45,
       lampState: 'GREEN_GLOW',
       isLeader: false,
-      priceUSD: 0.38,
+      priceUSD: getLiveSpot('CETUS', 0.0287),
       change24h: 18.2,
       tradeStatus: 'ACTIVE_PYRAMID',
     },
@@ -83,7 +93,7 @@ export default function SymbolAmpelMatrix({
       metaScore: 1.95,
       lampState: 'GREEN_SOLID',
       isLeader: false,
-      priceUSD: 0.165,
+      priceUSD: getLiveSpot('NAVX', 0.0117),
       change24h: 6.4,
       tradeStatus: 'SCOUT_ENTRY',
     },
@@ -99,7 +109,7 @@ export default function SymbolAmpelMatrix({
       metaScore: 1.22,
       lampState: 'YELLOW',
       isLeader: false,
-      priceUSD: 0.44,
+      priceUSD: getLiveSpot('SCA', 0.005),
       change24h: -1.2,
       tradeStatus: 'STANDBY_HOLD',
     },
@@ -115,7 +125,7 @@ export default function SymbolAmpelMatrix({
       metaScore: 2.68,
       lampState: 'GREEN_GLOW',
       isLeader: true,
-      priceUSD: 182.4,
+      priceUSD: getLiveSpot('SOL', 121),
       change24h: 8.5,
       tradeStatus: 'ACTIVE_PYRAMID',
     },
@@ -131,7 +141,7 @@ export default function SymbolAmpelMatrix({
       metaScore: 2.24,
       lampState: 'GREEN_SOLID',
       isLeader: false,
-      priceUSD: 1.18,
+      priceUSD: getLiveSpot('JUP', 0.34),
       change24h: 9.1,
       tradeStatus: 'SCOUT_ENTRY',
     },
@@ -147,7 +157,7 @@ export default function SymbolAmpelMatrix({
       metaScore: 1.84,
       lampState: 'GREEN_SOLID',
       isLeader: false,
-      priceUSD: 4.85,
+      priceUSD: getLiveSpot('RAY', 2.15),
       change24h: 5.4,
       tradeStatus: 'SCOUT_ENTRY',
     },
@@ -163,7 +173,7 @@ export default function SymbolAmpelMatrix({
       metaScore: 1.18,
       lampState: 'YELLOW',
       isLeader: false,
-      priceUSD: 2.92,
+      priceUSD: getLiveSpot('JTO', 0.62),
       change24h: 0.8,
       tradeStatus: 'STANDBY_HOLD',
     },
@@ -179,7 +189,7 @@ export default function SymbolAmpelMatrix({
       metaScore: 2.40,
       lampState: 'GREEN_SOLID',
       isLeader: true,
-      priceUSD: 64280.0,
+      priceUSD: getLiveSpot('BTC', 84500),
       change24h: 3.8,
       tradeStatus: 'ACTIVE_PYRAMID',
     },
@@ -195,7 +205,7 @@ export default function SymbolAmpelMatrix({
       metaScore: 2.15,
       lampState: 'GREEN_SOLID',
       isLeader: false,
-      priceUSD: 2780.0,
+      priceUSD: getLiveSpot('ETH', 2705),
       change24h: 4.2,
       tradeStatus: 'SCOUT_ENTRY',
     },
@@ -211,7 +221,7 @@ export default function SymbolAmpelMatrix({
       metaScore: 0.84,
       lampState: 'YELLOW',
       isLeader: false,
-      priceUSD: 0.142,
+      priceUSD: getLiveSpot('DOGE', 0.096),
       change24h: -2.4,
       tradeStatus: 'STANDBY_HOLD',
     },
@@ -227,11 +237,11 @@ export default function SymbolAmpelMatrix({
       metaScore: 0.41,
       lampState: 'RED_GLOW',
       isLeader: false,
-      priceUSD: 0.58,
+      priceUSD: getLiveSpot('XRP', 1.52),
       change24h: -5.1,
       tradeStatus: 'EMBARGO_BLOCKED',
     },
-  ], []);
+  ], [liveSpotTick]);
 
   // Filtered tokens
   const filteredTokens = useMemo(() => {
