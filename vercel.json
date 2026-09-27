@@ -26,6 +26,7 @@
     { "source": "/api/bots", "destination": "/api/handler" },
     { "source": "/api/bots/:path*", "destination": "/api/handler" },
     { "source": "/api/prices", "destination": "/api/handler" },
-    { "source": "/api/prices/:path*", "destination": "/api/handler" }
+    { "source": "/api/prices/:path*", "destination": "/api/handler" },
+    { "source": "/api/worker/dca/status", "destination": "/api/handler" }
   ]
 }

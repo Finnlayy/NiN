@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import { multiProviderCore } from './multiProvider';
 import { botRegistry } from './bots';
-import { runAutoDcaWorker } from './autoDcaWorker';
+import { runAutoDcaWorker, getDcaDipStatus } from './autoDcaWorker';
 import { handlePricesRequest } from './prices';
 import type { KrakenOrderExecutor } from './kraken';
 
@@ -164,6 +164,11 @@ export async function handleVercelApi(req: IncomingMessage, res: ServerResponse,
   }
 
   // --- Automatic DCA worker (Vercel Cron target) --------------------------
+  if (url === '/api/worker/dca/status' && method === 'GET') {
+    sendJson(res, 200, await getDcaDipStatus());
+    return true;
+  }
+
   if (url === '/api/worker/dca' && (method === 'GET' || method === 'POST')) {
     await runAutoDcaWorker(res, krakenExecutor);
     return true;

@@ -2,6 +2,7 @@ import type { ServerResponse } from 'http';
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
+import { getLivePrices } from './prices';
 import type { KrakenOrderExecutor } from './kraken';
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
@@ -39,6 +40,39 @@ function loadDcaReferences(): Record<string, number> {
     /* fall through to empty */
   }
   return {};
+}
+
+/**
+ * Read-only dip status for alerting: reports each configured asset's live
+ * price, stored reference and distance to the buy trigger — WITHOUT placing
+ * orders or touching the references. Poll-friendly.
+ */
+export async function getDcaDipStatus(): Promise<Record<string, unknown>> {
+  const references = loadDcaReferences();
+  const { prices, source } = await getLivePrices();
+  const assets = DCA_CONFIG.map((cfg) => {
+    const last = prices[cfg.asset] ?? null;
+    const reference = references[cfg.asset] ?? null;
+    const dipPct = last && reference ? Number((((last - reference) / reference) * 100).toFixed(2)) : null;
+    const nearTrigger = typeof dipPct === 'number' && dipPct <= cfg.dipThresholdPct + 1.0;
+    return {
+      asset: cfg.asset,
+      pair: cfg.pair,
+      amountUSD: cfg.amountUSD,
+      thresholdPct: cfg.dipThresholdPct,
+      last,
+      reference,
+      dipPct,
+      nearTrigger,
+      needsBaseline: reference === null,
+    };
+  });
+  return {
+    checkedAt: new Date().toISOString(),
+    priceSource: source,
+    armed: process.env.KRAKEN_AUTO_DCA === 'true',
+    assets,
+  };
 }
 
 export async function runAutoDcaWorker(res: ServerResponse, executor: KrakenOrderExecutor): Promise<void> {
