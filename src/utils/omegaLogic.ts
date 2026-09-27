@@ -720,13 +720,13 @@ export function getEcosystemMetaRotation(): EcosystemLeader[] {
     change24h: number;
   }> = [
     { symbol: 'BTC', name: 'Bitcoin Sovereign', cluster: 'BTC', leadAsset: 'BTC (GLOBAL MACRO)', r: 1.0, beta: 1.0, rvol: 2.8, cosPhi: 0.89, priceUSD: getLiveSpot('BTC', 64280.0), change24h: 3.8 },
-    { symbol: 'ETH', name: 'Ethereum Lead-Lag', cluster: 'ETH', leadAsset: 'ETH / BTC', r: 0.94, beta: 1.45, rvol: 2.2, cosPhi: 0.84, priceUSD: 2780.0, change24h: 4.2 },
+    { symbol: 'ETH', name: 'Ethereum Lead-Lag', cluster: 'ETH', leadAsset: 'ETH / BTC', r: 0.94, beta: 1.45, rvol: 2.2, cosPhi: 0.84, priceUSD: getLiveSpot('ETH', 2780.0), change24h: 4.2 },
     { symbol: 'SOL', name: 'Solana High-Beta', cluster: 'SOL', leadAsset: 'SOL (SELF)', r: 0.92, beta: 2.85, rvol: 3.9, cosPhi: 0.91, priceUSD: getLiveSpot('SOL', 182.4), change24h: 8.5 },
-    { symbol: 'SUI', name: 'Sui Quantum Vector', cluster: 'SUI', leadAsset: 'SUI (SELF)', r: 0.96, beta: 3.20, rvol: 4.8, cosPhi: 0.95, priceUSD: 3.42, change24h: 14.8 },
-    { symbol: 'BNB', name: 'Binance Sovereign', cluster: 'BTC', leadAsset: 'BTC', r: 0.82, beta: 1.15, rvol: 1.6, cosPhi: 0.72, priceUSD: 585.0, change24h: 2.1 },
-    { symbol: 'AVAX', name: 'Avalanche Subnets', cluster: 'ETH', leadAsset: 'ETH', r: 0.78, beta: 2.10, rvol: 1.9, cosPhi: 0.65, priceUSD: 28.5, change24h: 3.4 },
-    { symbol: 'DOGE', name: 'Dogecoin Sentiment', cluster: 'BTC', leadAsset: 'BTC', r: 0.48, beta: 1.80, rvol: 1.1, cosPhi: 0.28, priceUSD: 0.142, change24h: -1.8 },
-    { symbol: 'XRP', name: 'Ripple Liquidity', cluster: 'BTC', leadAsset: 'BTC', r: 0.35, beta: 0.95, rvol: 0.85, cosPhi: -0.22, priceUSD: 0.58, change24h: -4.5 },
+    { symbol: 'SUI', name: 'Sui Quantum Vector', cluster: 'SUI', leadAsset: 'SUI (SELF)', r: 0.96, beta: 3.20, rvol: 4.8, cosPhi: 0.95, priceUSD: getLiveSpot('SUI', 3.42), change24h: 14.8 },
+    { symbol: 'BNB', name: 'Binance Sovereign', cluster: 'BTC', leadAsset: 'BTC', r: 0.82, beta: 1.15, rvol: 1.6, cosPhi: 0.72, priceUSD: getLiveSpot('BNB', 585.0), change24h: 2.1 },
+    { symbol: 'AVAX', name: 'Avalanche Subnets', cluster: 'ETH', leadAsset: 'ETH', r: 0.78, beta: 2.10, rvol: 1.9, cosPhi: 0.65, priceUSD: getLiveSpot('AVAX', 28.5), change24h: 3.4 },
+    { symbol: 'DOGE', name: 'Dogecoin Sentiment', cluster: 'BTC', leadAsset: 'BTC', r: 0.48, beta: 1.80, rvol: 1.1, cosPhi: 0.28, priceUSD: getLiveSpot('DOGE', 0.142), change24h: -1.8 },
+    { symbol: 'XRP', name: 'Ripple Liquidity', cluster: 'BTC', leadAsset: 'BTC', r: 0.35, beta: 0.95, rvol: 0.85, cosPhi: -0.22, priceUSD: getLiveSpot('XRP', 0.58), change24h: -4.5 },
   ];
 
   const w1 = 0.25, w2 = 0.25, w3 = 0.25, w4 = 0.25;
@@ -876,7 +876,7 @@ export function getGPMIncubationCandidates(deltaTMinutes: number = 30): GPMCandi
       cluster: 'SUI',
       baseRealized: 4180.0,
       baseUnrealized: 1320.0,
-      spotPrice: 3.42,
+      spotPrice: getLiveSpot('SUI', 3.42),
       baseTrades: 58,
       winRate: 84.5,
       maxDrawdown: -145.0,
@@ -900,7 +900,7 @@ export function getGPMIncubationCandidates(deltaTMinutes: number = 30): GPMCandi
       cluster: 'ETH',
       baseRealized: 1450.0,
       baseUnrealized: 310.0,
-      spotPrice: 2780.0,
+      spotPrice: getLiveSpot('ETH', 2780.0),
       baseTrades: 32,
       winRate: 68.7,
       maxDrawdown: -340.0,

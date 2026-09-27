@@ -47,13 +47,13 @@ export interface AxiomAlertItem {
 function resolveAssetSpec(sym: string): { basePrice: number; atr: number } {
   switch (sym) {
     case 'SOL/USD':
-      return { basePrice: getLiveSpot('SOL', 182.40), atr: 5.80 };
+      return { basePrice: getLiveSpot('SOL', 121), atr: 5.80 };
     case 'SUI/USD':
-      return { basePrice: 3.42, atr: 0.18 };
+      return { basePrice: getLiveSpot('SUI', 1.18), atr: 0.18 };
     case 'ETH/USD':
-      return { basePrice: 2780.00, atr: 38.5 };
+      return { basePrice: getLiveSpot('ETH', 2705), atr: 38.5 };
     default:
-      return { basePrice: getLiveSpot('BTC', 64280.50), atr: 420 };
+      return { basePrice: getLiveSpot('BTC', 84500), atr: 420 };
   }
 };
 

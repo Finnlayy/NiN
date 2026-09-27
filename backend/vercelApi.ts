@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from 'http';
 import { multiProviderCore } from './multiProvider';
 import { botRegistry } from './bots';
 import { runAutoDcaWorker } from './autoDcaWorker';
+import { handlePricesRequest } from './prices';
 import type { KrakenOrderExecutor } from './kraken';
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
@@ -49,6 +50,11 @@ export async function handleVercelApi(req: IncomingMessage, res: ServerResponse,
 
   if (method === 'GET' && url === '/api/health') {
     sendJson(res, 200, { status: 'ok', service: 'neural-orchestrator', omega_engine: 'CANONICAL-1.0', learning_subsystem: 'ACTIVE' });
+    return true;
+  }
+
+  if (method === 'GET' && (url === '/api/prices' || url === '/api/prices/')) {
+    await handlePricesRequest(req, res);
     return true;
   }
 
@@ -112,7 +118,7 @@ export async function handleVercelApi(req: IncomingMessage, res: ServerResponse,
     const botId = url.startsWith('/api/bots/') ? url.replace('/api/bots/', '').replace('/trigger', '') : null;
 
     if (method === 'GET' && url === '/api/bots') {
-      sendJson(res, 200, botRegistry.getAll());
+      sendJson(res, 200, await botRegistry.getAllWithLivePrices());
       return true;
     }
     if (method === 'POST' && url === '/api/bots') {

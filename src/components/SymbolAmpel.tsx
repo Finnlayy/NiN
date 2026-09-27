@@ -104,16 +104,14 @@ export default function SymbolAmpel({ onLogEvent, className = '' }: SymbolAmpelP
     const streamInterval = setInterval(() => {
       setLeaders(prevLeaders => {
         return prevLeaders.map(leader => {
-          // Add micro random fluctuations to rvol, cosPhi, and price
+          // Add micro random fluctuations to rvol, cosPhi. Price is NOT
+          // jittered here — it comes from the live feed (getLiveSpot), and
+          // faking a random walk on top would corrupt the real quote.
           const rvolDelta = (Math.random() - 0.49) * 0.08;
           const newRvol = Math.max(0.4, Number((leader.rvol5m + rvolDelta).toFixed(2)));
 
           const cosPhiDelta = (Math.random() - 0.48) * 0.02;
           const newCosPhi = Math.max(-0.4, Math.min(0.99, Number((leader.cosPhi + cosPhiDelta).toFixed(2))));
-
-          const priceDeltaPercent = (Math.random() - 0.49) * 0.003;
-          const basePrice = leader.priceUSD || 100;
-          const newPrice = Number((basePrice * (1 + priceDeltaPercent)).toFixed(basePrice > 100 ? 1 : 3));
 
           // Calculate normalized metaScore according to OMEGA Blueprint §8
           const w1 = 0.25, w2 = 0.25, w3 = 0.25, w4 = 0.25;
@@ -134,7 +132,6 @@ export default function SymbolAmpel({ onLogEvent, className = '' }: SymbolAmpelP
             ...leader,
             rvol5m: newRvol,
             cosPhi: newCosPhi,
-            priceUSD: newPrice,
             metaScore: newScore,
             lampState: newLampState,
             tradeStatus,

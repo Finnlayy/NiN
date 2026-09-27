@@ -1,19 +1,37 @@
 /**
- * Live spot-price cache fed by the site's own /api/kraken/status endpoint —
- * the same data source the PRO LIVE MESH node (AgentCanvas) reads from.
+ * Live spot-price cache fed by the site's own /api/prices endpoint, which is
+ * backed by CoinGecko's free public API and covers all dashboard symbols.
  *
  * Components keep their simulated fallback values when the feed is
  * unreachable or has not warmed up yet, so the UI never breaks offline.
+ * If /api/prices itself fails, we degrade to the legacy /api/kraken/status
+ * feed for BTC/SOL so those prices still work.
  */
 
-export type LiveSymbol = 'BTC' | 'SOL';
+export type LiveSymbol =
+  | 'BTC' | 'ETH' | 'SOL' | 'SUI' | 'DOGE' | 'XRP' | 'BNB' | 'AVAX'
+  | 'CETUS' | 'NAVX' | 'SCA' | 'JUP' | 'RAY' | 'JTO' | 'HYPE';
 
 const FALLBACKS: Record<LiveSymbol, number> = {
-  BTC: 64280.5,
-  SOL: 182.4,
+  BTC: 84500,
+  ETH: 2705,
+  SOL: 121,
+  SUI: 1.18,
+  DOGE: 0.096,
+  XRP: 1.52,
+  BNB: 773,
+  AVAX: 10.9,
+  CETUS: 0.0287,
+  NAVX: 0.0117,
+  SCA: 0.005,
+  JUP: 0.34,
+  RAY: 2.15,
+  JTO: 0.62,
+  HYPE: 93,
 };
 
-const TICKER_MAP: Record<LiveSymbol, string> = {
+/** Legacy Kraken status feed (BTC/SOL only) — used as a degradation path. */
+const KRAKEN_TICKER_MAP: Partial<Record<LiveSymbol, string>> = {
   BTC: 'BTCUSD',
   SOL: 'SOLUSD',
 };
@@ -25,25 +43,50 @@ let poller: ReturnType<typeof setInterval> | null = null;
 let readyFired = false;
 const readyListeners: Array<() => void> = [];
 
-async function refresh(): Promise<void> {
+function notifyReadyIfWarmed(): void {
+  if (!readyFired && (cache.BTC !== undefined || cache.SOL !== undefined)) {
+    readyFired = true;
+    for (const cb of readyListeners) {
+      try { cb(); } catch { /* listener errors must not break the poller */ }
+    }
+  }
+}
+
+async function refreshFromKraken(): Promise<void> {
   try {
     const res = await fetch('/api/kraken/status');
     if (!res.ok) return;
     const data = await res.json();
-    for (const sym of Object.keys(TICKER_MAP) as LiveSymbol[]) {
-      const last = data?.ticker?.[TICKER_MAP[sym]]?.last;
+    for (const sym of Object.keys(KRAKEN_TICKER_MAP) as LiveSymbol[]) {
+      const last = data?.ticker?.[KRAKEN_TICKER_MAP[sym]!]?.last;
       if (typeof last === 'number' && Number.isFinite(last) && last > 0) {
         cache[sym] = last;
       }
     }
-    if (!readyFired && (cache.BTC !== undefined || cache.SOL !== undefined)) {
-      readyFired = true;
-      for (const cb of readyListeners) {
-        try { cb(); } catch { /* listener errors must not break the poller */ }
-      }
-    }
+    notifyReadyIfWarmed();
   } catch {
     // Keep last known value (or fallback) on network errors.
+  }
+}
+
+async function refresh(): Promise<void> {
+  try {
+    const res = await fetch('/api/prices');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    const prices = data?.prices;
+    if (!prices || typeof prices !== 'object') throw new Error('Malformed /api/prices payload');
+    for (const sym of Object.keys(FALLBACKS) as LiveSymbol[]) {
+      const value = prices[sym];
+      if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+        cache[sym] = value;
+      }
+    }
+    notifyReadyIfWarmed();
+  } catch {
+    // CoinGecko-backed route unavailable — degrade to the legacy Kraken feed
+    // so BTC/SOL stay live.
+    await refreshFromKraken();
   }
 }
 

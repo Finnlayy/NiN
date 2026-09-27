@@ -1,6 +1,7 @@
 import { writeFileSync, readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
+import { getLivePrices } from './prices';
 
 export interface TradingBot {
   id: string;
@@ -227,6 +228,35 @@ class BotRegistry {
 
   public getAll(): TradingBot[] {
     return Array.from(this.bots.values());
+  }
+
+  /**
+   * getAll() with each bot's currentPrice refreshed from the live CoinGecko
+   * feed, and unrealized PnL recomputed proportionally from entryPrice,
+   * investmentUsd and leverage. Pair base symbol is matched to the price map
+   * (e.g. HYPE/USDT.P -> HYPE); unknown pairs pass through unchanged.
+   */
+  public async getAllWithLivePrices(): Promise<TradingBot[]> {
+    const { prices } = await getLivePrices();
+    return this.getAll().map(bot => {
+      const base = bot.pair.split('/')[0]?.toUpperCase();
+      const livePrice = base ? prices[base] : undefined;
+      if (typeof livePrice !== 'number' || !Number.isFinite(livePrice) || livePrice <= 0 || bot.entryPrice <= 0) {
+        return bot;
+      }
+      const currentPrice = Number(livePrice.toFixed(livePrice > 100 ? 2 : 4));
+      const priceChange = (currentPrice - bot.entryPrice) / bot.entryPrice;
+      const directionMultiplier = bot.direction === 'LONG' ? 1 : -1;
+      const unrealizedPnlPercent = Number((priceChange * bot.leverage * directionMultiplier * 100).toFixed(2));
+      const unrealizedPnlUsd = Number(((bot.investmentUsd * unrealizedPnlPercent) / 100).toFixed(2));
+      return {
+        ...bot,
+        currentPrice,
+        unrealizedPnlUsd,
+        unrealizedPnlPercent,
+        lastUpdated: new Date().toLocaleTimeString('de-DE'),
+      };
+    });
   }
 
   public getById(id: string): TradingBot | undefined {

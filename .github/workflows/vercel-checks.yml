@@ -143,3 +143,11 @@ jobs:
               if(typeof j.ran!=='boolean'){console.error('/api/worker/dca malformed');process.exit(1);}
               console.log('/api/worker/dca OK, ran:',j.ran,'reason:',j.reason||'-');
             });"
+
+          PRICES=$(curl -fsS "$SITE/api/prices")
+          echo "$PRICES" | node -e "
+            let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{
+              const j=JSON.parse(d);
+              if(!j.prices||typeof j.prices.BTC!=='number'){console.error('/api/prices malformed: j.prices.BTC missing or not a number');process.exit(1);}
+              console.log('/api/prices OK, BTC:',j.prices.BTC,'source:',j.source||'-');
+            });"
