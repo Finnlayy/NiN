@@ -24,6 +24,8 @@ export interface KrakenRecentOrder {
   price: string;
   status: 'FILLED' | 'PENDING' | 'CANCELLED' | 'REJECTED';
   venue: string;
+  /** Paper ledger that filled the order (absent for real Kraken Pro fills). */
+  workspace?: string;
 }
 
 type CliResult = {
@@ -38,11 +40,12 @@ const CLI_TIMEOUT_MS = 20_000;
 const CLI_RELEASE = 'v0.4.1';
 
 /**
- * Paper workspace used when the real account has no funds: the CLI routes
- * `order buy/sell` to the simulated ledger whenever KRAKEN_WORKSPACE points
- * at this workspace (live Kraken prices, virtual balance, no real money).
+ * Paper workspaces used when the real account has no funds: the CLI routes
+ * `order buy/sell` to a simulated ledger whenever KRAKEN_WORKSPACE points at
+ * a paper workspace (live Kraken prices, virtual balance, no real money).
+ * Every bot/limb gets its OWN workspace so strategies never share a ledger.
  */
-const PAPER_WORKSPACE = 'nin-dca-paper';
+const PAPER_WORKSPACE_PREFIX = 'nin-paper';
 
 const PAPER_STARTING_USD = 10000;
 
@@ -262,8 +265,9 @@ export class KrakenOrderExecutor {
   private recentOrdersList: KrakenRecentOrder[] = [];
   private cliVersion: string | null = null;
   private preparing: Promise<string | null> | null = null;
-  private paperWorkspaceReady: Promise<boolean> | null = null;
-  private paperReady = false;
+  // One Kraken paper workspace per bot/limb (key = workspace name) so each
+  // strategy keeps its own isolated virtual ledger.
+  private paperWorkspaces = new Map<string, Promise<boolean>>();
 
   constructor() {
     this.cliPath = this.resolveCliPath();
@@ -415,32 +419,15 @@ export class KrakenOrderExecutor {
     }
 
     const started = Date.now();
-    const [versionRun, statusRun, tickerRun, paperRun] = await Promise.all([
+    const [versionRun, statusRun, tickerRun, paper] = await Promise.all([
       this.cliVersion ? Promise.resolve(null) : this.runCli(['--version']),
       this.runCli(['status', '-o', 'json']),
       this.runCli(['ticker', 'BTCUSD', 'SOLUSD', '-o', 'json']),
-      // Paper ledger balance — only once the workspace is known to exist, and
-      // never allowed to fail the whole status call.
-      this.paperReady
-        ? this.runCli(['balance', '-o', 'json'], { KRAKEN_WORKSPACE: PAPER_WORKSPACE })
-        : Promise.resolve(null),
+      // Per-bot paper ledger balances — each workspace is created on first
+      // contact; failures degrade to available:false and never fail status.
+      this.paperLedgerStatus(),
     ]);
     const latencyMs = Date.now() - started;
-
-    let paper: Record<string, unknown> | null = null;
-    if (paperRun) {
-      if (paperRun.ok) {
-        let parsed: unknown = null;
-        try {
-          parsed = parseJson(paperRun.stdout);
-        } catch {
-          parsed = null;
-        }
-        paper = { available: true, workspace: PAPER_WORKSPACE, balances: parsed };
-      } else {
-        paper = { available: false, workspace: PAPER_WORKSPACE };
-      }
-    }
 
     if (versionRun?.ok) {
       this.cliVersion = versionRun.stdout.trim() || this.cliVersion;
@@ -536,13 +523,15 @@ export class KrakenOrderExecutor {
   }
 
   /**
-   * Create (once) the paper workspace that backs the no-funds fallback.
+   * Create (once) a paper workspace that backs the no-funds fallback.
    * Re-running against an existing workspace is tolerated, so warm instances
    * simply re-attach to the ledger persisted under the CLI config dir.
+   * Each bot/limb uses its own workspace name for an isolated ledger.
    */
-  private ensurePaperWorkspace(): Promise<boolean> {
-    if (!this.paperWorkspaceReady) {
-      this.paperWorkspaceReady = (async () => {
+  private ensurePaperWorkspace(workspace: string): Promise<boolean> {
+    let ready = this.paperWorkspaces.get(workspace);
+    if (!ready) {
+      ready = (async () => {
         await this.ensureCli();
         if (!this.hasNativeCli()) {
           return false;
@@ -550,7 +539,7 @@ export class KrakenOrderExecutor {
         const create = await this.runCli([
           'workspace',
           'create',
-          PAPER_WORKSPACE,
+          workspace,
           '--capital',
           String(PAPER_STARTING_USD),
           '--mode',
@@ -559,16 +548,67 @@ export class KrakenOrderExecutor {
           'json',
         ]);
         // Any failure other than "already exists" is retried next time by
-        // resetting the memoized promise.
+        // dropping the memoized promise.
         if (!create.ok && !/exists/i.test(create.stderr + create.stdout)) {
-          this.paperWorkspaceReady = null;
+          this.paperWorkspaces.delete(workspace);
           return false;
         }
-        this.paperReady = true;
         return true;
       })();
+      this.paperWorkspaces.set(workspace, ready);
     }
-    return this.paperWorkspaceReady;
+    return ready;
+  }
+
+  /**
+   * Which paper ledger a limb trades on. Limbs 4/5 (the DCA bots) get their
+   * own dedicated workspaces; anything else falls back to a slug of the limb
+   * name, and unknown/manual orders share a default ledger.
+   */
+  private paperWorkspaceFor(limbContext?: { limb: number; name: string }, limbName = ''): string {
+    if (limbContext && (limbContext.limb === 4 || limbContext.limb === 5)) {
+      return `${PAPER_WORKSPACE_PREFIX}-limb-${limbContext.limb}`;
+    }
+    const slug = (limbContext?.name || limbName || '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 30);
+    return slug ? `${PAPER_WORKSPACE_PREFIX}-${slug}` : `${PAPER_WORKSPACE_PREFIX}-default`;
+  }
+
+  /**
+   * Balances of every known paper ledger (per-bot virtual accounts). Creates
+   * the standard set on first contact; failures degrade to available:false
+   * and never fail the whole status call.
+   */
+  private async paperLedgerStatus(): Promise<Record<string, unknown>> {
+    const targets = new Set<string>([
+      `${PAPER_WORKSPACE_PREFIX}-limb-4`,
+      `${PAPER_WORKSPACE_PREFIX}-limb-5`,
+      `${PAPER_WORKSPACE_PREFIX}-default`,
+      ...this.paperWorkspaces.keys(),
+    ]);
+    const entries = await Promise.all(
+      [...targets].map(async (workspace) => {
+        const ok = await this.ensurePaperWorkspace(workspace);
+        if (!ok) {
+          return [workspace, { available: false }] as const;
+        }
+        const run = await this.runCli(['balance', '-o', 'json'], { KRAKEN_WORKSPACE: workspace });
+        if (!run.ok) {
+          return [workspace, { available: false }] as const;
+        }
+        let balances: unknown = null;
+        try {
+          balances = parseJson(run.stdout);
+        } catch {
+          balances = null;
+        }
+        return [workspace, { available: true, balances }] as const;
+      })
+    );
+    return { workspaces: Object.fromEntries(entries) };
   }
 
   /**
@@ -579,16 +619,20 @@ export class KrakenOrderExecutor {
   private async executePaperOrder(
     args: string[],
     req: KrakenOrderRequest,
-    limbName: string
+    limbName: string,
+    limbContext?: { limb: 4 | 5; name: string }
   ): Promise<Record<string, unknown>> {
     const timestamp = new Date().toISOString();
-    const ready = await this.ensurePaperWorkspace();
+    // Every bot gets its own paper sub-account so ledgers stay isolated.
+    const workspace = this.paperWorkspaceFor(limbContext, limbName);
+    const ready = await this.ensurePaperWorkspace(workspace);
     if (!ready) {
       return {
         success: false,
         connected: false,
         paper: true,
-        error: 'PAPER_UNAVAILABLE: paper workspace could not be initialized.',
+        workspace,
+        error: `PAPER_UNAVAILABLE: paper workspace ${workspace} could not be initialized.`,
         status: 'REJECTED',
         pair: req.pair,
         type: req.type,
@@ -598,7 +642,7 @@ export class KrakenOrderExecutor {
       };
     }
 
-    const result = await this.runCli(args, { KRAKEN_WORKSPACE: PAPER_WORKSPACE });
+    const result = await this.runCli(args, { KRAKEN_WORKSPACE: workspace });
     let parsed: unknown;
     try {
       parsed = parseJson(result.stdout);
@@ -611,6 +655,7 @@ export class KrakenOrderExecutor {
         success: false,
         connected: true,
         paper: true,
+        workspace,
         error: `Paper ledger rejected the order. ${[
           (result.stdout || '').replace(/\s+/g, ' ').trim().slice(0, 1000) || null,
           quoteError(result.stderr, '') || null,
@@ -636,6 +681,7 @@ export class KrakenOrderExecutor {
       price: req.price !== undefined ? String(req.price) : 'market',
       status: 'FILLED',
       venue: 'Kraken Paper',
+      workspace,
     });
 
     return {
@@ -643,6 +689,7 @@ export class KrakenOrderExecutor {
       connected: true,
       paper: true,
       venue: 'Kraken Paper',
+      workspace,
       limb: limbName,
       status: 'FILLED',
       txid: paperTxid,
@@ -700,11 +747,11 @@ export class KrakenOrderExecutor {
       // the DCA strategy keeps executing against live prices (virtual money,
       // honestly tagged as PAPER in the UI).
       if (/insufficient funds/i.test(channels)) {
-        const paperResult = await this.executePaperOrder(args, req, limbName);
+        const paperResult = await this.executePaperOrder(args, req, limbName, limbContext);
         return {
           ...paperResult,
           realAccountError: 'EOrder:Insufficient funds',
-          note: 'Real account underfunded — order executed on the Kraken paper ledger instead.',
+          note: 'Real account underfunded — order executed on the limb\'s Kraken paper ledger instead.',
         };
       }
       this.recordOrder({

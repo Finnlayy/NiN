@@ -777,8 +777,11 @@ export default function AgentCanvas() {
                             {ord.status ?? 'UNKNOWN'}
                           </span>
                           {ord.venue === 'Kraken Paper' && (
-                            <span className="ml-1 text-[8px] font-bold px-1 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40" title="Executed on the Kraken paper ledger — virtual funds, live prices">
-                              PAPER
+                            <span
+                              className="ml-1 text-[8px] font-bold px-1 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40"
+                              title={`Executed on the bot's isolated Kraken paper ledger (${ord.workspace ?? 'nin-paper'}) — virtual funds, live prices`}
+                            >
+                              PAPER{ord.workspace ? `·${String(ord.workspace).replace(/^nin-paper-/, '').replace(/^limb-/, 'L')}` : ''}
                             </span>
                           )}
                         </div>
