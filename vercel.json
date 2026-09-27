@@ -5,9 +5,6 @@
   "functions": {
     "api/handler.js": {
       "maxDuration": 60
-    },
-    "api/worker/dca.js": {
-      "maxDuration": 60
     }
   },
   "rewrites": [
@@ -27,6 +24,7 @@
     { "source": "/api/bots/:path*", "destination": "/api/handler" },
     { "source": "/api/prices", "destination": "/api/handler" },
     { "source": "/api/prices/:path*", "destination": "/api/handler" },
-    { "source": "/api/worker/dca/status", "destination": "/api/handler" }
+    { "source": "/api/worker/dca", "destination": "/api/handler" },
+    { "source": "/api/worker/dca/:path*", "destination": "/api/handler" }
   ]
 }

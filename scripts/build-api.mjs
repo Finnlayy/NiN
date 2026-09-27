@@ -6,8 +6,11 @@ import { build } from 'esbuild';
 import { mkdirSync } from 'node:fs';
 
 const entries = [
+  // The DCA worker runs inside the shared handler (rewritten /api/worker/dca)
+  // so it shares the executor singleton and the /tmp reference store with the
+  // dip-status endpoint. A separate function would get its own /tmp and the
+  // monitor would never see the worker's references.
   { entry: 'backend/handlerEntry.ts', out: 'api/_build/handler.cjs' },
-  { entry: 'backend/workerDca.ts', out: 'api/_build/worker-dca.cjs' },
 ];
 
 mkdirSync('api/_build', { recursive: true });

@@ -68,10 +68,10 @@ jobs:
         run: |
           test -f api/handler.js || { echo "api/handler.js missing"; exit 1; }
           node --check api/handler.js
-          test -f api/worker/dca.js || { echo "api/worker/dca.js missing"; exit 1; }
-          node --check api/worker/dca.js
           grep -q '"source": "/api/kraken/status", "destination": "/api/handler"' vercel.json \
             || { echo "vercel.json must route /api/kraken/status through the shared handler"; exit 1; }
+          grep -q '"source": "/api/worker/dca", "destination": "/api/handler"' vercel.json \
+            || { echo "vercel.json must route /api/worker/dca through the shared handler"; exit 1; }
           echo "API functions OK"
 
       - name: Validate vercel.json
