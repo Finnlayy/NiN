@@ -569,7 +569,12 @@ export class KrakenOrderExecutor {
     if (limbContext && (limbContext.limb === 4 || limbContext.limb === 5)) {
       return `${PAPER_WORKSPACE_PREFIX}-limb-${limbContext.limb}`;
     }
-    const slug = (limbContext?.name || limbName || '')
+    const raw = (limbContext?.name || limbName || '').trim();
+    // Manual/unknown dispatches are not a bot — they share the default ledger.
+    if (!raw || /unknown/i.test(raw)) {
+      return `${PAPER_WORKSPACE_PREFIX}-default`;
+    }
+    const slug = raw
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/^-+|-+$/g, '')
