@@ -551,7 +551,12 @@ export class KrakenOrderExecutor {
       return {
         success: false,
         connected: true,
-        error: `Kraken CLI rejected the order. ${quoteError(result.stderr, result.stdout || 'No CLI output.')}`,
+        // Kraken's error envelope is JSON on STDOUT; stderr may only carry the
+        // "live: this goes to the real Kraken account" warning. Surface both.
+        error: `Kraken CLI rejected the order. ${[
+          (result.stdout || '').replace(/\s+/g, ' ').trim().slice(0, 1000) || null,
+          quoteError(result.stderr, '') || null,
+        ].filter(Boolean).join(' | stderr: ') || 'No CLI output.'}`,
         status: 'REJECTED',
         pair: req.pair,
         type: req.type,
