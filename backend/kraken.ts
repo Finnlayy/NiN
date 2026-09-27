@@ -709,11 +709,18 @@ export class KrakenOrderExecutor {
 
     const result = await this.runCli(parts);
     if (!result.ok) {
+      // Kraken answers errors as JSON on STDOUT with a non-zero exit code —
+      // stderr may only carry the debug request line. Surface both channels.
+      const stderrText = quoteError(result.stderr, '');
+      const stdoutText = (result.stdout || '').replace(/\s+/g, ' ').trim().slice(0, 1500);
+      const detail = stdoutText
+        ? stdoutText + (stderrText ? ` || stderr: ${stderrText}` : '')
+        : stderrText || 'command failed';
       return {
         success: false,
         connected: true,
         command: trimmed,
-        error: `Kraken CLI Error: ${quoteError(result.stderr, result.stdout || 'command failed')}`,
+        error: `Kraken CLI Error: ${detail}`,
       };
     }
 
