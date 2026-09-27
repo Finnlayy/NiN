@@ -37,6 +37,15 @@ const CLI_TIMEOUT_MS = 20_000;
 
 const CLI_RELEASE = 'v0.4.1';
 
+/**
+ * Paper workspace used when the real account has no funds: the CLI routes
+ * `order buy/sell` to the simulated ledger whenever KRAKEN_WORKSPACE points
+ * at this workspace (live Kraken prices, virtual balance, no real money).
+ */
+const PAPER_WORKSPACE = 'nin-dca-paper';
+
+const PAPER_STARTING_USD = 10000;
+
 function releaseAssetName(): string {
   return process.arch === 'arm64'
     ? 'kraken-cli-aarch64-unknown-linux-gnu.tar.gz'
@@ -253,6 +262,8 @@ export class KrakenOrderExecutor {
   private recentOrdersList: KrakenRecentOrder[] = [];
   private cliVersion: string | null = null;
   private preparing: Promise<string | null> | null = null;
+  private paperWorkspaceReady: Promise<boolean> | null = null;
+  private paperReady = false;
 
   constructor() {
     this.cliPath = this.resolveCliPath();
@@ -315,7 +326,7 @@ export class KrakenOrderExecutor {
     return Boolean(process.env.KRAKEN_API_KEY && process.env.KRAKEN_API_SECRET);
   }
 
-  private async runCli(args: string[]): Promise<CliResult> {
+  private async runCli(args: string[], extraEnv: NodeJS.ProcessEnv = {}): Promise<CliResult> {
     const cliPath = this.hasNativeCli() ? this.cliPath : null;
     if (!cliPath) {
       return {
@@ -330,7 +341,7 @@ export class KrakenOrderExecutor {
       // Trim credentials: values pasted into hosting dashboards frequently
       // carry a trailing newline, which breaks the API-Key HTTP header
       // ("failed to parse header value").
-      const env: NodeJS.ProcessEnv = { ...process.env, KRAKEN_LOG_FORMAT: 'compact' };
+      const env: NodeJS.ProcessEnv = { ...process.env, KRAKEN_LOG_FORMAT: 'compact', ...extraEnv };
       if (typeof env.KRAKEN_API_KEY === 'string') {
         env.KRAKEN_API_KEY = env.KRAKEN_API_KEY.trim();
       }
@@ -404,12 +415,32 @@ export class KrakenOrderExecutor {
     }
 
     const started = Date.now();
-    const [versionRun, statusRun, tickerRun] = await Promise.all([
+    const [versionRun, statusRun, tickerRun, paperRun] = await Promise.all([
       this.cliVersion ? Promise.resolve(null) : this.runCli(['--version']),
       this.runCli(['status', '-o', 'json']),
       this.runCli(['ticker', 'BTCUSD', 'SOLUSD', '-o', 'json']),
+      // Paper ledger balance — only once the workspace is known to exist, and
+      // never allowed to fail the whole status call.
+      this.paperReady
+        ? this.runCli(['balance', '-o', 'json'], { KRAKEN_WORKSPACE: PAPER_WORKSPACE })
+        : Promise.resolve(null),
     ]);
     const latencyMs = Date.now() - started;
+
+    let paper: Record<string, unknown> | null = null;
+    if (paperRun) {
+      if (paperRun.ok) {
+        let parsed: unknown = null;
+        try {
+          parsed = parseJson(paperRun.stdout);
+        } catch {
+          parsed = null;
+        }
+        paper = { available: true, workspace: PAPER_WORKSPACE, balances: parsed };
+      } else {
+        paper = { available: false, workspace: PAPER_WORKSPACE };
+      }
+    }
 
     if (versionRun?.ok) {
       this.cliVersion = versionRun.stdout.trim() || this.cliVersion;
@@ -481,6 +512,7 @@ export class KrakenOrderExecutor {
       cliVersion: this.cliVersion,
       system,
       ticker,
+      paper,
       limbs: {
         limb_1: limb('Swarm Limb 1 (Scout Node)', 'BTCUSD', 'Trigger Scout Tranche', true),
         limb_2: limb('Swarm Limb 2 (Pyramid Node)', 'BTCUSD', 'ATR Trailing Tranches', true),
@@ -501,6 +533,126 @@ export class KrakenOrderExecutor {
     if (this.recentOrdersList.length > 25) {
       this.recentOrdersList.length = 25;
     }
+  }
+
+  /**
+   * Create (once) the paper workspace that backs the no-funds fallback.
+   * Re-running against an existing workspace is tolerated, so warm instances
+   * simply re-attach to the ledger persisted under the CLI config dir.
+   */
+  private ensurePaperWorkspace(): Promise<boolean> {
+    if (!this.paperWorkspaceReady) {
+      this.paperWorkspaceReady = (async () => {
+        await this.ensureCli();
+        if (!this.hasNativeCli()) {
+          return false;
+        }
+        const create = await this.runCli([
+          'workspace',
+          'create',
+          PAPER_WORKSPACE,
+          '--capital',
+          String(PAPER_STARTING_USD),
+          '--mode',
+          'paper',
+          '-o',
+          'json',
+        ]);
+        // Any failure other than "already exists" is retried next time by
+        // resetting the memoized promise.
+        if (!create.ok && !/exists/i.test(create.stderr + create.stdout)) {
+          this.paperWorkspaceReady = null;
+          return false;
+        }
+        this.paperReady = true;
+        return true;
+      })();
+    }
+    return this.paperWorkspaceReady;
+  }
+
+  /**
+   * Execute an order against the paper ledger (same args as a live order —
+   * the CLI routes it because KRAKEN_WORKSPACE scopes the invocation to the
+   * paper workspace).
+   */
+  private async executePaperOrder(
+    args: string[],
+    req: KrakenOrderRequest,
+    limbName: string
+  ): Promise<Record<string, unknown>> {
+    const timestamp = new Date().toISOString();
+    const ready = await this.ensurePaperWorkspace();
+    if (!ready) {
+      return {
+        success: false,
+        connected: false,
+        paper: true,
+        error: 'PAPER_UNAVAILABLE: paper workspace could not be initialized.',
+        status: 'REJECTED',
+        pair: req.pair,
+        type: req.type,
+        volume: req.volume,
+        limb: limbName,
+        timestamp,
+      };
+    }
+
+    const result = await this.runCli(args, { KRAKEN_WORKSPACE: PAPER_WORKSPACE });
+    let parsed: unknown;
+    try {
+      parsed = parseJson(result.stdout);
+    } catch {
+      parsed = { raw: result.stdout };
+    }
+
+    if (!result.ok) {
+      return {
+        success: false,
+        connected: true,
+        paper: true,
+        error: `Paper ledger rejected the order. ${[
+          (result.stdout || '').replace(/\s+/g, ' ').trim().slice(0, 1000) || null,
+          quoteError(result.stderr, '') || null,
+        ].filter(Boolean).join(' | stderr: ') || 'No CLI output.'}`,
+        status: 'REJECTED',
+        pair: req.pair,
+        type: req.type,
+        volume: req.volume,
+        limb: limbName,
+        timestamp,
+        kraken: parsed,
+      };
+    }
+
+    const paperTxid = findTxid(parsed) ?? `paper-${Date.now()}`;
+    this.recordOrder({
+      id: paperTxid,
+      time: timestamp,
+      limb: limbName,
+      type: req.type === 'sell' ? 'SELL' : 'BUY',
+      pair: req.pair,
+      volume: String(req.volume),
+      price: req.price !== undefined ? String(req.price) : 'market',
+      status: 'FILLED',
+      venue: 'Kraken Paper',
+    });
+
+    return {
+      success: true,
+      connected: true,
+      paper: true,
+      venue: 'Kraken Paper',
+      limb: limbName,
+      status: 'FILLED',
+      txid: paperTxid,
+      descr: findDescription(parsed),
+      pair: req.pair,
+      type: req.type,
+      volume: req.volume,
+      timestamp,
+      kraken: parsed,
+    };
   }
 
   async executeOrder(
@@ -543,6 +695,18 @@ export class KrakenOrderExecutor {
     const timestamp = new Date().toISOString();
 
     if (!result.ok) {
+      const channels = `${result.stdout} ${result.stderr}`;
+      // No funds on the real account: degrade to the Kraken paper ledger so
+      // the DCA strategy keeps executing against live prices (virtual money,
+      // honestly tagged as PAPER in the UI).
+      if (/insufficient funds/i.test(channels)) {
+        const paperResult = await this.executePaperOrder(args, req, limbName);
+        return {
+          ...paperResult,
+          realAccountError: 'EOrder:Insufficient funds',
+          note: 'Real account underfunded — order executed on the Kraken paper ledger instead.',
+        };
+      }
       this.recordOrder({
         id: `rejected-${Date.now()}`,
         time: timestamp,

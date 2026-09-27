@@ -557,8 +557,12 @@ export default function AgentCanvas() {
       const data = await res.json();
       if (data.success) {
         const txid = data.orderResult?.txid;
+        const isPaper = Boolean(data.orderResult?.paper);
         setActionStatus(
-          `Order accepted by Kraken Pro: ${data.limb} $${amountUSD} @ ${data.orderResult?.status ?? 'FILLED'}` +
+          (isPaper
+            ? `PAPER fill (real account underfunded): `
+            : `Order accepted by Kraken Pro: `) +
+          `${data.limb} $${amountUSD} @ ${data.orderResult?.status ?? 'FILLED'}` +
             (txid ? ` · txid ${txid}` : '')
         );
         fetchExecutionStatus();
@@ -772,6 +776,11 @@ export default function AgentCanvas() {
                           }`}>
                             {ord.status ?? 'UNKNOWN'}
                           </span>
+                          {ord.venue === 'Kraken Paper' && (
+                            <span className="ml-1 text-[8px] font-bold px-1 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40" title="Executed on the Kraken paper ledger — virtual funds, live prices">
+                              PAPER
+                            </span>
+                          )}
                         </div>
                         <div className="text-right">
                           <div className="text-cyan-300">{ord.price}</div>
