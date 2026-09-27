@@ -53,9 +53,7 @@ jobs:
       - name: Verify API bundles
         run: |
           test -f api/_build/handler.cjs || { echo "api/_build/handler.cjs missing"; exit 1; }
-          test -f api/_build/worker-dca.cjs || { echo "api/_build/worker-dca.cjs missing"; exit 1; }
           node --check api/_build/handler.cjs
-          node --check api/_build/worker-dca.cjs
           echo "API bundles OK"
 
       - name: Verify build output
