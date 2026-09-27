@@ -334,11 +334,19 @@ export class KrakenOrderExecutor {
       });
       return { ok: true, stdout, stderr, code: 0 };
     } catch (err: unknown) {
-      const error = err as { stdout?: string; stderr?: string; message?: string; code?: number | string };
+      const error = err as { stdout?: string; stderr?: string; message?: string; code?: number | string; signal?: string };
+      const detail = [
+        error.stderr,
+        error.signal ? `signal=${error.signal}` : null,
+        typeof error.code === 'number' ? `exit=${error.code}` : error.code ? `code=${error.code}` : null,
+        error.message,
+      ]
+        .filter(Boolean)
+        .join(' | ');
       return {
         ok: false,
         stdout: error.stdout || '',
-        stderr: error.stderr || error.message || String(err),
+        stderr: detail || String(err),
         code: typeof error.code === 'number' ? error.code : null,
       };
     }
