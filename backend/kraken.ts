@@ -689,12 +689,20 @@ export class KrakenOrderExecutor {
     }
     const txid = findTxid(parsed);
     const errorMessage = findErrorMessage(parsed);
+    // Kraken signals a successful --validate with status "validated" and no
+    // txid (no order is placed); a live placement signals with a txid.
+    const statusField =
+      parsed && typeof parsed === 'object' && typeof (parsed as Record<string, unknown>).status === 'string'
+        ? ((parsed as Record<string, unknown>).status as string)
+        : null;
+    const validated = !errorMessage && (statusField === 'validated' || Boolean(txid));
     return {
-      validated: Boolean(txid) && !errorMessage,
+      validated,
       connected: true,
       txid,
+      krakenStatus: statusField,
       descr: findDescription(parsed),
-      error: errorMessage ?? (txid ? null : 'Kraken returned no txid for the validated order.'),
+      error: errorMessage ?? (validated ? null : 'Kraken neither validated the order nor returned a txid.'),
       kraken: parsed,
       timestamp: new Date().toISOString(),
     };
