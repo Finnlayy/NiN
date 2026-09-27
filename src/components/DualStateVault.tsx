@@ -5,7 +5,6 @@ import {
   ShieldCheck,
   TrendingUp,
   Percent,
-  Layers,
   Sparkles,
   RotateCcw,
   Zap,
@@ -54,7 +53,6 @@ export default function DualStateVault({
   const [marginUnrealizedPnL, setMarginUnrealizedPnL] = useState<number>(382.10);
   const [unbondingLatencyMs, setUnbondingLatencyMs] = useState<number>(23.8);
   const [isTransitioning, setIsTransitioning] = useState<boolean>(false);
-  const [activeScenario, setActiveScenario] = useState<string>('CANONICAL');
   const [inspectorOpen, setInspectorOpen] = useState<boolean>(false);
 
   // TWAP Execution Engine State (Zustand B)
@@ -196,54 +194,6 @@ export default function DualStateVault({
         }, 0);
       }
     }, 45); // < 50ms transition
-  };
-
-  // Scenario Presets
-  const handleSelectScenario = (preset: string) => {
-    setActiveScenario(preset);
-
-    if (preset === 'CANONICAL') {
-      setTotalAUM(100000.0);
-      setDynamicLeverage(8.5);
-      setVaultState('STATE_A_AUTO_EARN');
-      setTimeout(() => {
-        onLogEvent?.(
-          '[DUAL-VAULT §10] Szenario: Kanonische 90/10 Baseline aktiviert ($90k Margin @ 8.5x, $10k Auto-Earn @ 7.25% APY).',
-          'info',
-          'CAPITAL_ALLOCATOR'
-        );
-      }, 0);
-    } else if (preset === 'GEOPOLITICAL_DIP') {
-      setDynamicLeverage(10.0);
-      handleToggleVaultState('STATE_B_FLASH_TWAP');
-      setTimeout(() => {
-        onLogEvent?.(
-          '[DUAL-VAULT §10] Szenario: Geopolitischer Rebound / Flash-Discount (2:1 Deal) erkannt! Instant-Unbonding aktiv -> TWAP-Orderflow gestartet.',
-          'warn',
-          'THE_JUDGE'
-        );
-      }, 0);
-    } else if (preset === 'GROUND_STATE') {
-      setDynamicLeverage(1.0);
-      setVaultState('STATE_A_AUTO_EARN');
-      setTimeout(() => {
-        onLogEvent?.(
-          '[DUAL-VAULT §10] Szenario: Axiom 3 (Ground State) erzwungen! 100% Cash-Protection, alle Positionen via Cluster-Exit glattgestellt.',
-          'success',
-          'THE_JUDGE'
-        );
-      }, 0);
-    } else if (preset === 'HIGH_BETA_SURGE') {
-      setDynamicLeverage(15.0);
-      setVaultState('STATE_A_AUTO_EARN');
-      setTimeout(() => {
-        onLogEvent?.(
-          '[DUAL-VAULT §10] Szenario: High-Beta Impulse Surge! Konfidenz-Hebel auf 15.0x skaliert, maximale Einkaufskraft freigeschaltet.',
-          'info',
-          'CAPITAL_ALLOCATOR'
-        );
-      }, 0);
-    }
   };
 
   return (
@@ -771,36 +721,6 @@ export default function DualStateVault({
             </span>
             <span className="text-emerald-400 font-medium">Zero Lock-up</span>
           </div>
-        </div>
-      </div>
-
-      {/* SECTION 3: SCENARIO PRESETS TOOLBAR */}
-      <div className="mt-6 pt-5 border-t border-white/5 flex flex-wrap items-center justify-between gap-3 text-xs font-mono">
-        <div className="flex items-center gap-2 text-slate-400">
-          <Layers className="w-4 h-4 text-cyan-400" />
-          <span>Szenario-Simulationen (§10):</span>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          {[
-            { id: 'CANONICAL', label: 'Kanonische 90/10 Baseline' },
-            { id: 'GEOPOLITICAL_DIP', label: '⚡ Geopolitischer Dip (State B TWAP)' },
-            { id: 'GROUND_STATE', label: '🛡️ Ground State (100% Cash Safe Haven)' },
-            { id: 'HIGH_BETA_SURGE', label: '🚀 High-Beta Surge (15x Leverage)' },
-          ].map(sc => (
-            <button
-              key={sc.id}
-              id={`vault-scenario-btn-${sc.id}`}
-              onClick={() => handleSelectScenario(sc.id)}
-              className={`px-3 py-1.5 rounded-xl border transition-all ${
-                activeScenario === sc.id
-                  ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40 font-bold shadow-sm'
-                  : 'bg-white/[0.02] hover:bg-white/[0.06] text-slate-400 hover:text-white border-white/5'
-              }`}
-            >
-              {sc.label}
-            </button>
-          ))}
         </div>
       </div>
 

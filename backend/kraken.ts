@@ -419,15 +419,31 @@ export class KrakenOrderExecutor {
     }
 
     const started = Date.now();
-    const [versionRun, statusRun, tickerRun, paper] = await Promise.all([
+    const [versionRun, statusRun, tickerRun, paper, balanceRun] = await Promise.all([
       this.cliVersion ? Promise.resolve(null) : this.runCli(['--version']),
       this.runCli(['status', '-o', 'json']),
       this.runCli(['ticker', 'BTCUSD', 'SOLUSD', '-o', 'json']),
       // Per-bot paper ledger balances — each workspace is created on first
       // contact; failures degrade to available:false and never fail status.
       this.paperLedgerStatus(),
+      // Real-account balance (no KRAKEN_WORKSPACE) so callers can tell
+      // whether the next fill will be real or paper. Never fails status.
+      this.runCli(['balance', '-o', 'json']),
     ]);
     const latencyMs = Date.now() - started;
+
+    let realBalance: Record<string, unknown>;
+    if (balanceRun.ok) {
+      let parsed: unknown = null;
+      try {
+        parsed = parseJson(balanceRun.stdout);
+      } catch {
+        parsed = null;
+      }
+      realBalance = { available: true, balances: parsed };
+    } else {
+      realBalance = { available: false };
+    }
 
     if (versionRun?.ok) {
       this.cliVersion = versionRun.stdout.trim() || this.cliVersion;
@@ -500,6 +516,7 @@ export class KrakenOrderExecutor {
       system,
       ticker,
       paper,
+      realBalance,
       limbs: {
         limb_1: limb('Swarm Limb 1 (Scout Node)', 'BTCUSD', 'Trigger Scout Tranche', true),
         limb_2: limb('Swarm Limb 2 (Pyramid Node)', 'BTCUSD', 'ATR Trailing Tranches', true),

@@ -45,7 +45,6 @@ export default function GPMIncubationArena({
   );
   const [deployedLiveSymbols, setDeployedLiveSymbols] = useState<string[]>(['SUI', 'SOL']);
   const [deploymentSuccessNotice, setDeploymentSuccessNotice] = useState<string | null>(null);
-  const [activeScenario, setActiveScenario] = useState<string>('CANONICAL');
 
   const isInitialMount = useRef(true);
 
@@ -191,75 +190,6 @@ export default function GPMIncubationArena({
     );
   };
 
-  // Scenario Switcher to demonstrate rank flipping
-  const handleSelectScenario = (scenario: string) => {
-    setActiveScenario(scenario);
-
-    if (scenario === 'SOL_FLIP') {
-      onLogEvent?.("Szenario aktiviert: Solana Flipping (SOL klettert auf Rang 1 mit Rekord-GPM)", "warn", "GPM_ARENA");
-    } else if (scenario === 'ETH_COMEBACK') {
-      onLogEvent?.("Szenario aktiviert: Ethereum Lead-Lag Surge (ETH steigt in Top-2 auf)", "success", "GPM_ARENA");
-    } else {
-      onLogEvent?.("Szenario zurückgesetzt auf kanonische GPM-Baseline", "info", "GPM_ARENA");
-    }
-
-    setCandidates(prev => {
-      let next = [...prev];
-      if (scenario === 'SOL_FLIP') {
-        // SOL moves to Rank 1 with high burst GPM
-        next = next.map(c => {
-          if (c.symbol === 'SOL') {
-            const rel = 5800;
-            const unrel = 2100;
-            return {
-              ...c,
-              realizedPnLShadowUSD: rel,
-              unrealizedPnLUSD: unrel,
-              gpm: calculateGPM(rel, unrel, selectedDeltaT),
-            };
-          }
-          if (c.symbol === 'SUI') {
-            const rel = 3400;
-            const unrel = 900;
-            return {
-              ...c,
-              realizedPnLShadowUSD: rel,
-              unrealizedPnLUSD: unrel,
-              gpm: calculateGPM(rel, unrel, selectedDeltaT),
-            };
-          }
-          return c;
-        });
-      } else if (scenario === 'ETH_COMEBACK') {
-        // ETH rises to Rank 2
-        next = next.map(c => {
-          if (c.symbol === 'ETH') {
-            const rel = 4400;
-            const unrel = 1800;
-            return {
-              ...c,
-              realizedPnLShadowUSD: rel,
-              unrealizedPnLUSD: unrel,
-              gpm: calculateGPM(rel, unrel, selectedDeltaT),
-            };
-          }
-          return c;
-        });
-      } else {
-        // Reset to canonical
-        next = getGPMIncubationCandidates(selectedDeltaT);
-      }
-
-      next.sort((a, b) => b.gpm - a.gpm);
-      return next.map((c, idx) => ({
-        ...c,
-        rank: idx + 1,
-        isPromotedToLive: idx < 2,
-        liveStatus: idx < 2 ? 'PROMOTED_LIVE' : 'STANDBY_INCUBATION',
-      }));
-    });
-  };
-
   const top2Candidates = useMemo(() => candidates.slice(0, 2), [candidates]);
   const standbyCandidates = useMemo(() => candidates.slice(2, 4), [candidates]);
 
@@ -402,10 +332,10 @@ export default function GPMIncubationArena({
         </div>
       </div>
 
-      {/* Arena Subheader: Round Countdown, Scenarios, and Primary [ 🚀 LIVE SCHALTEN ] Action */}
+      {/* Arena Subheader: Round Countdown and Primary [ 🚀 LIVE SCHALTEN ] Action */}
       <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-center text-xs font-mono bg-black/25 p-3 rounded-xl border border-white/5">
         {/* Countdown & Round Info */}
-        <div className="md:col-span-4 flex items-center gap-3">
+        <div className="md:col-span-6 flex items-center gap-3">
           <div className="flex items-center gap-2 text-slate-300">
             <Clock className="w-4 h-4 text-amber-400" />
             <span className="text-slate-400">Rundenschluss in:</span>
@@ -418,43 +348,8 @@ export default function GPMIncubationArena({
           </span>
         </div>
 
-        {/* Scenario Switcher */}
-        <div className="md:col-span-4 flex items-center gap-1.5 flex-wrap">
-          <span className="text-slate-400 text-[10px] shrink-0">Szenario:</span>
-          <button
-            onClick={() => handleSelectScenario('CANONICAL')}
-            className={`px-2 py-0.5 rounded text-[10px] transition-all ${
-              activeScenario === 'CANONICAL'
-                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 font-bold'
-                : 'bg-slate-800 text-slate-400'
-            }`}
-          >
-            Kanonisch
-          </button>
-          <button
-            onClick={() => handleSelectScenario('SOL_FLIP')}
-            className={`px-2 py-0.5 rounded text-[10px] transition-all ${
-              activeScenario === 'SOL_FLIP'
-                ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 font-bold'
-                : 'bg-slate-800 text-slate-400'
-            }`}
-          >
-            SOL Flip #1
-          </button>
-          <button
-            onClick={() => handleSelectScenario('ETH_COMEBACK')}
-            className={`px-2 py-0.5 rounded text-[10px] transition-all ${
-              activeScenario === 'ETH_COMEBACK'
-                ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 font-bold'
-                : 'bg-slate-800 text-slate-400'
-            }`}
-          >
-            ETH Aufstieg
-          </button>
-        </div>
-
         {/* Level 4 Deployment Trigger Button: [ 🚀 LIVE SCHALTEN ] */}
-        <div className="md:col-span-4 flex justify-start md:justify-end">
+        <div className="md:col-span-6 flex justify-start md:justify-end">
           {autonomyLevel === 'L4_HITL' ? (
             <button
               id="btn-deploy-live-l4"

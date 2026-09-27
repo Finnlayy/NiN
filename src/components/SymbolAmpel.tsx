@@ -1,7 +1,6 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   Radio,
-  Sparkles,
   Activity,
   RotateCw,
   Clock,
@@ -37,7 +36,6 @@ export default function SymbolAmpel({ onLogEvent, className = '' }: SymbolAmpelP
     new Date().toLocaleTimeString('de-DE')
   );
   const [inspectorOpen, setInspectorOpen] = useState(false);
-  const [activeScenario, setActiveScenario] = useState<string>('CANONICAL');
 
   // Force Meta-Rotation re-ranking
   const handleForceRotation = useCallback((isAutomatic: boolean = false) => {
@@ -161,127 +159,6 @@ export default function SymbolAmpel({ onLogEvent, className = '' }: SymbolAmpelP
 
     return () => clearInterval(streamInterval);
   }, [liveStreamActive]);
-
-  // Apply market scenario presets to demonstrate all Ampel states
-  const handleApplyScenario = (scenario: string) => {
-    setActiveScenario(scenario);
-    let updated: EcosystemLeader[] = [];
-
-    switch (scenario) {
-      case 'SUI_BREAKOUT':
-        updated = getEcosystemMetaRotation().map(l => {
-          if (l.symbol === 'SUI') {
-            return {
-              ...l,
-              rvol5m: 5.4,
-              cosPhi: 0.98,
-              metaScore: 0.965,
-              lampState: 'GREEN_GLOW',
-              isLeader: true,
-              tradeStatus: 'ACTIVE_PYRAMID',
-              change24h: 19.4,
-            };
-          }
-          return {
-            ...l,
-            isLeader: false,
-            lampState: l.symbol === 'SOL' ? 'GREEN_SOLID' : l.lampState,
-          };
-        });
-        onLogEvent?.("Szenario aktiviert: Sui Quantum Breakout (SUI -> GREEN_GLOW Meta-Leader, Reverse-DCA aktiv)", "success", "AMPEL_KERNEL");
-        break;
-
-      case 'SOL_DOMINANCE':
-        updated = getEcosystemMetaRotation().map(l => {
-          if (l.symbol === 'SOL') {
-            return {
-              ...l,
-              rvol5m: 4.8,
-              betaLead: 3.4,
-              cosPhi: 0.96,
-              metaScore: 0.952,
-              lampState: 'GREEN_GLOW',
-              isLeader: true,
-              tradeStatus: 'ACTIVE_PYRAMID',
-              change24h: 12.8,
-            };
-          }
-          return {
-            ...l,
-            isLeader: false,
-            lampState: l.symbol === 'SUI' ? 'GREEN_SOLID' : l.lampState,
-          };
-        });
-        onLogEvent?.("Szenario aktiviert: Solana High-Beta Surge (SOL -> GREEN_GLOW Meta-Leader)", "success", "AMPEL_KERNEL");
-        break;
-
-      case 'MACRO_RISK_OFF':
-        updated = getEcosystemMetaRotation().map(l => {
-          if (l.symbol === 'BTC') {
-            return {
-              ...l,
-              cosPhi: 0.88,
-              metaScore: 0.84,
-              lampState: 'GREEN_SOLID',
-              isLeader: true,
-              tradeStatus: 'SCOUT_ENTRY',
-            };
-          }
-          return {
-            ...l,
-            isLeader: false,
-            cosPhi: l.cosPhi - 0.35,
-            metaScore: Number((l.metaScore * 0.7).toFixed(3)),
-            lampState: 'YELLOW',
-            tradeStatus: 'STANDBY_HOLD',
-            change24h: -3.5,
-          };
-        });
-        onLogEvent?.("Szenario aktiviert: Makro Risk-Off Phase (Alts fallen in YELLOW Standby, BTC hält Stabilitaet)", "warn", "AMPEL_KERNEL");
-        break;
-
-      case 'VIA_NEGATIVA_SHOCK':
-        updated = getEcosystemMetaRotation().map(l => {
-          if (l.symbol === 'XRP' || l.symbol === 'DOGE') {
-            return {
-              ...l,
-              cosPhi: -0.45,
-              metaScore: 0.28,
-              lampState: 'RED_GLOW',
-              tradeStatus: 'EMBARGO_BLOCKED',
-              change24h: -8.4,
-            };
-          }
-          if (l.symbol === 'BNB') {
-            return {
-              ...l,
-              cosPhi: 0.12,
-              metaScore: 0.42,
-              lampState: 'GRAY',
-              tradeStatus: 'STANDBY_HOLD',
-            };
-          }
-          return l;
-        });
-        onLogEvent?.("Szenario aktiviert: Destruktive Phasen-Interferenz & Via Negativa Sperre (RED_GLOW Embargo für XRP & DOGE)", "error", "THE_JUDGE");
-        break;
-
-      case 'CANONICAL':
-      default:
-        updated = getEcosystemMetaRotation();
-        onLogEvent?.("Szenario zurückgesetzt auf kanonische OMEGA-Blueprint Baseline", "info", "AMPEL_KERNEL");
-        break;
-    }
-
-    updated.sort((a, b) => b.metaScore - a.metaScore);
-    if (updated.length > 0 && scenario !== 'MACRO_RISK_OFF') {
-      updated[0].isLeader = true;
-      if (updated[0].lampState === 'GREEN_SOLID') {
-        updated[0].lampState = 'GREEN_GLOW';
-      }
-    }
-    setLeaders(updated);
-  };
 
   // Filtered leaders
   const filteredLeaders = useMemo(() => {
@@ -475,69 +352,10 @@ export default function SymbolAmpel({ onLogEvent, className = '' }: SymbolAmpelP
         </div>
       </div>
 
-      {/* Scenario Bar & Global Statistics */}
-      <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-center text-xs font-mono">
-        {/* Scenario Presets Selector */}
-        <div className="md:col-span-7 flex items-center gap-2 flex-wrap">
-          <span className="text-slate-400 shrink-0 flex items-center gap-1">
-            <Sparkles className="w-3.5 h-3.5 text-amber-400" /> Szenario:
-          </span>
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <button
-              onClick={() => handleApplyScenario('CANONICAL')}
-              className={`px-2.5 py-1 rounded-lg text-[11px] transition-all ${
-                activeScenario === 'CANONICAL'
-                  ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 font-bold'
-                  : 'bg-slate-800/60 text-slate-400 hover:text-white border border-slate-800'
-              }`}
-            >
-              Kanonisch
-            </button>
-            <button
-              onClick={() => handleApplyScenario('SUI_BREAKOUT')}
-              className={`px-2.5 py-1 rounded-lg text-[11px] transition-all ${
-                activeScenario === 'SUI_BREAKOUT'
-                  ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-bold'
-                  : 'bg-slate-800/60 text-slate-400 hover:text-white border border-slate-800'
-              }`}
-            >
-              Sui Breakout
-            </button>
-            <button
-              onClick={() => handleApplyScenario('SOL_DOMINANCE')}
-              className={`px-2.5 py-1 rounded-lg text-[11px] transition-all ${
-                activeScenario === 'SOL_DOMINANCE'
-                  ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 font-bold'
-                  : 'bg-slate-800/60 text-slate-400 hover:text-white border border-slate-800'
-              }`}
-            >
-              Solana Momentum
-            </button>
-            <button
-              onClick={() => handleApplyScenario('MACRO_RISK_OFF')}
-              className={`px-2.5 py-1 rounded-lg text-[11px] transition-all ${
-                activeScenario === 'MACRO_RISK_OFF'
-                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 font-bold'
-                  : 'bg-slate-800/60 text-slate-400 hover:text-white border border-slate-800'
-              }`}
-            >
-              Risk-Off Standby
-            </button>
-            <button
-              onClick={() => handleApplyScenario('VIA_NEGATIVA_SHOCK')}
-              className={`px-2.5 py-1 rounded-lg text-[11px] transition-all ${
-                activeScenario === 'VIA_NEGATIVA_SHOCK'
-                  ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40 font-bold'
-                  : 'bg-slate-800/60 text-slate-400 hover:text-white border border-slate-800'
-              }`}
-            >
-              Via Negativa Sperre
-            </button>
-          </div>
-        </div>
-
+      {/* Global Statistics */}
+      <div className="flex items-center justify-end gap-2 flex-wrap text-xs font-mono">
         {/* Global Ampel Summary Badges */}
-        <div className="md:col-span-5 flex items-center justify-start md:justify-end gap-2 flex-wrap text-[11px]">
+        <div className="flex items-center justify-start md:justify-end gap-2 flex-wrap text-[11px]">
           <span className="px-2 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/30 text-emerald-300">
             {statusCounts.greenGlow} Green Glow
           </span>

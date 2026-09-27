@@ -7,7 +7,6 @@ import {
   Activity,
   Zap,
   RefreshCw,
-  Sliders,
   ChevronDown,
   ChevronUp,
   Cpu,
@@ -61,7 +60,6 @@ export default function SystemStatus({
   className = '',
   compact = false,
   initialSymbol = 'BTC/USD',
-  showControls = true,
   onInspectAxiom
 }: SystemStatusProps) {
   // Live asset selection
@@ -73,8 +71,9 @@ export default function SystemStatus({
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
   const [expandedAxiomId, setExpandedAxiomId] = useState<number | null>(null);
   
-  // Diagnostic simulation mode to demonstrate reactive status indicators
-  const [diagnosticMode, setDiagnosticMode] = useState<DiagnosticMode>('NOMINAL');
+  // Diagnostic simulation mode removed from the UI (test scenarios no longer
+  // needed); the engine stays pinned to the nominal invariant state.
+  const [diagnosticMode] = useState<DiagnosticMode>('NOMINAL');
 
   // Re-render once when the first live tick replaces the fallback prices,
   // so the mount-time memo below does not freeze the simulated values.
@@ -522,96 +521,6 @@ export default function SystemStatus({
           </div>
         </div>
       </div>
-
-      {/* Interactive Diagnostic Modes Selector (Optional controls for stress-testing axioms) */}
-      {showControls && (
-        <div className="my-4 p-3 bg-[#111520]/80 border border-slate-800 rounded-xl flex flex-wrap items-center justify-between gap-3 text-xs">
-          <div className="flex items-center gap-2 text-slate-300">
-            <Sliders className="w-3.5 h-3.5 text-cyan-400" />
-            <span className="font-semibold">Axiom Stresstest / Simulation:</span>
-          </div>
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <button
-              onClick={() => {
-                setDiagnosticMode('NOMINAL');
-                onLogEvent?.("Diagnostic mode reset: Nominal Invariant state.", "info", "SystemStatus");
-              }}
-              className={`px-2.5 py-1 rounded-lg font-mono text-[11px] transition-colors ${
-                diagnosticMode === 'NOMINAL'
-                  ? 'bg-emerald-600 text-white font-bold'
-                  : 'bg-[#181d2a] text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              1. Normal (6/6 Pass)
-            </button>
-            <button
-              onClick={() => {
-                setDiagnosticMode('WARN_ZONE');
-                onLogEvent?.("Axiom 1 Caution Zone simulation active.", "warn", "SystemStatus");
-              }}
-              className={`px-2.5 py-1 rounded-lg font-mono text-[11px] transition-colors ${
-                diagnosticMode === 'WARN_ZONE'
-                  ? 'bg-amber-600 text-white font-bold'
-                  : 'bg-[#181d2a] text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              2. Warnzone (§14.1)
-            </button>
-            <button
-              onClick={() => {
-                setDiagnosticMode('BREACH_ZONE');
-                onLogEvent?.("Axiom 1 Out-of-bounds breach simulation active.", "error", "SystemStatus");
-              }}
-              className={`px-2.5 py-1 rounded-lg font-mono text-[11px] transition-colors ${
-                diagnosticMode === 'BREACH_ZONE'
-                  ? 'bg-rose-600 text-white font-bold'
-                  : 'bg-[#181d2a] text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              3. Ausschluss-Bruch (§14.1)
-            </button>
-            <button
-              onClick={() => {
-                setDiagnosticMode('COUNTER_GRAVITY');
-                onLogEvent?.("Axiom 2 Counter-gradient direction simulation active.", "error", "SystemStatus");
-              }}
-              className={`px-2.5 py-1 rounded-lg font-mono text-[11px] transition-colors ${
-                diagnosticMode === 'COUNTER_GRAVITY'
-                  ? 'bg-rose-600 text-white font-bold'
-                  : 'bg-[#181d2a] text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              4. Gradient-Gegenlauf (§14.2)
-            </button>
-            <button
-              onClick={() => {
-                setDiagnosticMode('NAKED_STOP');
-                onLogEvent?.("Axiom 5 Naked position breach simulation active.", "error", "SystemStatus");
-              }}
-              className={`px-2.5 py-1 rounded-lg font-mono text-[11px] transition-colors ${
-                diagnosticMode === 'NAKED_STOP'
-                  ? 'bg-rose-600 text-white font-bold'
-                  : 'bg-[#181d2a] text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              5. Ohne Stop-Loss (§14.5)
-            </button>
-            <button
-              onClick={() => {
-                setDiagnosticMode('FAKEOUT_PHASE');
-                onLogEvent?.("Axiom 6 Fakeout overheated regime simulation active.", "warn", "SystemStatus");
-              }}
-              className={`px-2.5 py-1 rounded-lg font-mono text-[11px] transition-colors ${
-                diagnosticMode === 'FAKEOUT_PHASE'
-                  ? 'bg-amber-600 text-white font-bold'
-                  : 'bg-[#181d2a] text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              6. Fakeout-Regime (§14.6)
-            </button>
-          </div>
-        </div>
-      )}
 
       {/* The 6 Axioms: Status Indicators Grid */}
       <div className="mt-4 space-y-3">

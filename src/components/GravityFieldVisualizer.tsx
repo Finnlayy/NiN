@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import {
   Compass,
-  Sliders,
   ShieldAlert,
   CheckCircle2,
   Activity,
@@ -67,7 +66,8 @@ export default function GravityFieldVisualizer({
   const wBlind = 0.35;
   const wPoly = 0.40;
 
-  // Interactive Calibrated Parameters
+  // Calibrated parameters — scenario preset UI removed; values drift organically
+  // with the live feed (see below) and can be reset to defaults via handleReset.
   const [polyProb, setPolyProb] = useState<number>(0.78);
   const [l2Depth, setL2Depth] = useState<number>(1450); // Visible Bids/Asks depth
   const [icebergDepth, setIcebergDepth] = useState<number>(2200); // Shadow hidden depth
@@ -310,19 +310,8 @@ export default function GravityFieldVisualizer({
     setHoveredPoint(null);
   };
 
-  // Preset Scenario Handlers
-  const applyScenario = (name: string, l2: number, ice: number, poly: number, spotAdj: number = 0) => {
-    setL2Depth(l2);
-    setIcebergDepth(ice);
-    setPolyProb(poly);
-    if (spotAdj !== 0) {
-      setSimulatedPrice(spotPrice + spotAdj);
-    }
-    if (onLogEvent) {
-      onLogEvent(`Gravitationsfeld-Szenario angewendet: ${name} (L2: ${l2} BTC, Ice: ${ice} BTC, Poly: ${(poly * 100).toFixed(0)}%)`, 'info', 'GravityVisualizer');
-    }
-  };
-
+  // Preset scenario handlers removed — test scenarios are no longer offered
+  // in the UI. Only the plain reset-to-defaults control remains.
   const handleReset = () => {
     setPolyProb(0.78);
     setL2Depth(1450);
@@ -900,144 +889,8 @@ export default function GravityFieldVisualizer({
         </div>
       </div>
 
-      {/* Interactive Parameter Calibration Sliders & Scenarios */}
-      <div className="mt-5 pt-4 border-t border-slate-700/60 font-mono text-xs space-y-4">
-        <div className="flex items-center justify-between flex-wrap gap-2">
-          <div className="flex items-center gap-2 text-white font-bold">
-            <Sliders className="w-4 h-4 text-cyan-400" />
-            <span>GRAVITATIONS-PARAMETER KALIBRIERUNG &amp; SZENARIEN:</span>
-          </div>
-
-          {/* Quick Preset Buttons */}
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <span className="text-[11px] text-slate-400 mr-1">Szenarien:</span>
-            <button
-              onClick={() => applyScenario('Polymarket Bull Shock', 1600, 2400, 0.92)}
-              className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-amber-300 text-[11px] transition-colors border border-slate-700"
-            >
-              Polymarket Shock (92%)
-            </button>
-            <button
-              onClick={() => applyScenario('Dark Pool Wall Absorption', 1200, 4100, 0.68)}
-              className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-purple-300 text-[11px] transition-colors border border-slate-700"
-            >
-              Iceberg Wall (4100 BTC)
-            </button>
-            <button
-              onClick={() => applyScenario('Orderbook Asks Squeeze', 2500, 2100, 0.72)}
-              className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-cyan-300 text-[11px] transition-colors border border-slate-700"
-            >
-              L2 Squeeze (2500 BTC)
-            </button>
-            <button
-              onClick={() => applyScenario('Harmonisches Gleichgewicht', 1400, 2000, 0.50)}
-              className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-emerald-300 text-[11px] transition-colors border border-slate-700"
-            >
-              Gleichgewicht (P* = Spot)
-            </button>
-          </div>
-        </div>
-
-        {/* 4 Interactive Calibration Controls */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 bg-[#0a0d16] p-4 rounded-xl border border-slate-800/80">
-          {/* Slider 1: Polymarket Probability */}
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between text-[11px]">
-              <span className="text-amber-400 font-semibold flex items-center gap-1">
-                <Sparkles className="w-3 h-3" />
-                Polymarket Wahrsch. (40%)
-              </span>
-              <span className="font-bold text-amber-300">{(polyProb * 100).toFixed(0)}%</span>
-            </div>
-            <input
-              type="range"
-              min="0.10"
-              max="0.95"
-              step="0.01"
-              value={polyProb}
-              onChange={(e) => setPolyProb(parseFloat(e.target.value))}
-              className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-amber-400"
-            />
-            <div className="flex justify-between text-[10px] text-slate-500">
-              <span>Bärisch (10%)</span>
-              <span>Bullisch (95%)</span>
-            </div>
-          </div>
-
-          {/* Slider 2: Visible L2 Depth */}
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between text-[11px]">
-              <span className="text-cyan-400 font-semibold flex items-center gap-1">
-                <Layers className="w-3 h-3" />
-                Sichtbare L2-Tiefe (25%)
-              </span>
-              <span className="font-bold text-cyan-300">{l2Depth} BTC</span>
-            </div>
-            <input
-              type="range"
-              min="600"
-              max="2800"
-              step="50"
-              value={l2Depth}
-              onChange={(e) => setL2Depth(parseInt(e.target.value, 10))}
-              className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-cyan-400"
-            />
-            <div className="flex justify-between text-[10px] text-slate-500">
-              <span>Asks Druck</span>
-              <span>Bids Stütze</span>
-            </div>
-          </div>
-
-          {/* Slider 3: Blind Iceberg Depth */}
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between text-[11px]">
-              <span className="text-purple-400 font-semibold flex items-center gap-1">
-                <Zap className="w-3 h-3" />
-                Schatten-Tiefe (35%)
-              </span>
-              <span className="font-bold text-purple-300">{icebergDepth} BTC</span>
-            </div>
-            <input
-              type="range"
-              min="1000"
-              max="4200"
-              step="50"
-              value={icebergDepth}
-              onChange={(e) => setIcebergDepth(parseInt(e.target.value, 10))}
-              className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-purple-400"
-            />
-            <div className="flex justify-between text-[10px] text-slate-500">
-              <span>Flache Order</span>
-              <span>Tiefe Absorption</span>
-            </div>
-          </div>
-
-          {/* Slider 4: Simulated Spot Price */}
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between text-[11px]">
-              <span className="text-slate-300 font-semibold flex items-center gap-1">
-                <Activity className="w-3 h-3" />
-                Simulierter Spot-Kurs P
-              </span>
-              <span className="font-bold text-white">${simulatedPrice.toLocaleString()}</span>
-            </div>
-            <input
-              type="range"
-              min={spotPrice - 1800}
-              max={spotPrice + 1800}
-              step="25"
-              value={simulatedPrice}
-              onChange={(e) => setSimulatedPrice(parseInt(e.target.value, 10))}
-              className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-cyan-400"
-            />
-            <div className="flex justify-between text-[10px] text-slate-500">
-              <span>-${1800}</span>
-              <span>+${1800}</span>
-            </div>
-          </div>
-        </div>
-
-        {/* Theoretical Axiom Context Footer */}
+      {/* Theoretical Axiom Context Footer */}
+      <div className="mt-5 pt-4 border-t border-slate-700/60 font-mono text-xs">
         <div className="p-3 bg-white/[0.02] rounded-xl border border-white/5 text-[11px] text-slate-400 flex items-start gap-2.5">
           <Info className="w-4 h-4 text-cyan-400 shrink-0 mt-0.5" />
           <div>
