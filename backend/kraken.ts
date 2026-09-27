@@ -109,7 +109,7 @@ function quoteError(stderr: string, fallback: string): string {
   if (!text) {
     return fallback;
   }
-  return text.slice(0, 500);
+  return text.slice(0, 2000);
 }
 
 function tickerQuote(payload: unknown, hints: string[]): Record<string, unknown> | null {
