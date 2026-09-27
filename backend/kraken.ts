@@ -327,10 +327,20 @@ export class KrakenOrderExecutor {
     }
 
     try {
+      // Trim credentials: values pasted into hosting dashboards frequently
+      // carry a trailing newline, which breaks the API-Key HTTP header
+      // ("failed to parse header value").
+      const env: NodeJS.ProcessEnv = { ...process.env, KRAKEN_LOG_FORMAT: 'compact' };
+      if (typeof env.KRAKEN_API_KEY === 'string') {
+        env.KRAKEN_API_KEY = env.KRAKEN_API_KEY.trim();
+      }
+      if (typeof env.KRAKEN_API_SECRET === 'string') {
+        env.KRAKEN_API_SECRET = env.KRAKEN_API_SECRET.trim();
+      }
       const { stdout, stderr } = await execFileAsync(cliPath, args, {
         timeout: CLI_TIMEOUT_MS,
         maxBuffer: 2 * 1024 * 1024,
-        env: { ...process.env, KRAKEN_LOG_FORMAT: 'compact' },
+        env,
       });
       return { ok: true, stdout, stderr, code: 0 };
     } catch (err: unknown) {
