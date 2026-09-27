@@ -1,11 +1,13 @@
 /**
- * Live spot-price cache fed by the site's own /api/prices endpoint, which is
- * backed by CoinGecko's free public API and covers all dashboard symbols.
+ * Live spot-price cache. Symbols that Kraken lists (BTC, ETH, SOL, SUI, DOGE,
+ * XRP, AVAX) are fed by the site's own /api/kraken/tickers endpoint — the same
+ * Kraken stream the terminal panel shows, so every panel quotes the identical
+ * venue price. The remaining symbols come from /api/prices (CoinGecko), which
+ * also covers the Kraken-listed ones whenever the Kraken stream is down.
  *
- * Components keep their simulated fallback values when the feed is
- * unreachable or has not warmed up yet, so the UI never breaks offline.
- * If /api/prices itself fails, we degrade to the legacy /api/kraken/status
- * feed for BTC/SOL so those prices still work.
+ * Components keep their simulated fallback values when no feed has warmed up
+ * yet, so the UI never breaks offline. If both routes fail, we degrade to the
+ * legacy /api/kraken/status feed for BTC/SOL so those prices still work.
  */
 
 export type LiveSymbol =
@@ -35,6 +37,9 @@ const KRAKEN_TICKER_MAP: Partial<Record<LiveSymbol, string>> = {
   BTC: 'BTCUSD',
   SOL: 'SOLUSD',
 };
+
+/** Symbols quoted directly by the Kraken stream (authoritative venue feed). */
+const KRAKEN_SYMBOLS: LiveSymbol[] = ['BTC', 'ETH', 'SOL', 'SUI', 'DOGE', 'XRP', 'AVAX'];
 
 const REFRESH_INTERVAL_MS = 10_000;
 
@@ -69,7 +74,39 @@ async function refreshFromKraken(): Promise<void> {
   }
 }
 
+/**
+ * Pull the Kraken stream for every Kraken-listed symbol. Returns the set of
+ * symbols that actually received a fresh quote, so the caller knows which
+ * ones CoinGecko still needs to cover.
+ */
+async function refreshFromKrakenTickers(): Promise<Set<LiveSymbol>> {
+  const updated = new Set<LiveSymbol>();
+  try {
+    const res = await fetch('/api/kraken/tickers');
+    if (!res.ok) return updated;
+    const data = await res.json();
+    const prices = data?.prices;
+    if (!prices || typeof prices !== 'object') return updated;
+    for (const sym of KRAKEN_SYMBOLS) {
+      const value = (prices as Record<string, unknown>)[sym];
+      if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+        cache[sym] = value;
+        updated.add(sym);
+      }
+    }
+  } catch {
+    // Keep last known value (or fallback) on network errors.
+  }
+  return updated;
+}
+
 async function refresh(): Promise<void> {
+  // 1) Kraken stream first — authoritative venue prices, identical to what
+  //    the Kraken terminal panel displays.
+  const krakenUpdated = await refreshFromKrakenTickers();
+
+  // 2) CoinGecko covers the symbols Kraken doesn't list, and re-covers the
+  //    Kraken-listed ones whenever the Kraken stream is unreachable.
   try {
     const res = await fetch('/api/prices');
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -77,6 +114,7 @@ async function refresh(): Promise<void> {
     const prices = data?.prices;
     if (!prices || typeof prices !== 'object') throw new Error('Malformed /api/prices payload');
     for (const sym of Object.keys(FALLBACKS) as LiveSymbol[]) {
+      if (krakenUpdated.has(sym)) continue;
       const value = prices[sym];
       if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
         cache[sym] = value;

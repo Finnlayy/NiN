@@ -515,6 +515,56 @@ export class KrakenOrderExecutor {
     return this.recentOrdersList.slice();
   }
 
+  /**
+   * Live last-trade prices straight from the Kraken ticker stream for every
+   * dashboard symbol Kraken lists. Symbols Kraken does not list are simply
+   * absent from the map, so the caller can fall back to another feed for
+   * those. This is the SAME stream the Kraken terminal panel shows, which
+   * keeps every panel quoting the identical venue price.
+   */
+  async getSymbolTickers(): Promise<{ source: string; prices: Record<string, number> }> {
+    const SYMBOL_PAIR_HINTS: Record<string, string[]> = {
+      BTC: ['XXBTZUSD', 'XBTUSD', 'BTCUSD'],
+      ETH: ['XETHZUSD', 'ETHUSD'],
+      SOL: ['SOLUSD'],
+      SUI: ['SUIUSD'],
+      DOGE: ['XDGUSD', 'DOGEUSD'],
+      XRP: ['XXRPZUSD', 'XRPUSD'],
+      AVAX: ['AVAXUSD'],
+    };
+    const prices: Record<string, number> = {};
+    await this.ensureCli();
+    if (!this.hasNativeCli() || !this.cliPath) {
+      return { source: 'kraken', prices };
+    }
+    const pairs = [...new Set(Object.values(SYMBOL_PAIR_HINTS).flat())];
+    const run = await this.runCli(['ticker', ...pairs, '-o', 'json']);
+    if (!run.ok) {
+      return { source: 'kraken', prices };
+    }
+    let parsed: unknown;
+    try {
+      parsed = parseJson(run.stdout);
+    } catch {
+      return { source: 'kraken', prices };
+    }
+    for (const [symbol, hints] of Object.entries(SYMBOL_PAIR_HINTS)) {
+      for (const hint of hints) {
+        const value =
+          parsed && typeof parsed === 'object'
+            ? (parsed as Record<string, unknown>)[hint]
+            : undefined;
+        const quote = value && typeof value === 'object' ? (value as Record<string, unknown>) : null;
+        const last = priceOf(quote);
+        if (last) {
+          prices[symbol] = last;
+          break;
+        }
+      }
+    }
+    return { source: 'kraken', prices };
+  }
+
   private recordOrder(entry: KrakenRecentOrder): void {
     this.recentOrdersList.unshift(entry);
     if (this.recentOrdersList.length > 25) {

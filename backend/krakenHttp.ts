@@ -90,6 +90,12 @@ export async function handleKrakenApi(
     return true;
   }
 
+  if (method === 'GET' && url === '/api/kraken/tickers') {
+    const tickers = await krakenExecutor.getSymbolTickers();
+    sendJson(res, 200, tickers);
+    return true;
+  }
+
   if (method === 'POST' && url === '/api/kraken/test-order') {
     try {
       const body = await readJsonBody(req);
