@@ -82,7 +82,9 @@ async function initRuntime(): Promise<ApiRuntime> {
   const root = process.cwd();
   const templatePath = join(root, 'prompts', 'system', 'neural_core.yaml');
   const telemetry = new InMemoryTelemetryStore();
-  const learningPath = join(root, 'data', 'learning', 'store.json');
+  // /var/task is read-only on Vercel. The learning store has to live in /tmp.
+  const writableRoot = process.env.VERCEL ? '/tmp' : root;
+  const learningPath = join(writableRoot, 'data', 'learning', 'store.json');
   const learningProvider = new FileLearningStoreProvider(learningPath);
   const learningStore = await learningProvider.load();
   const learningEngine = new ContinuousLearningEngine({ store: learningStore });

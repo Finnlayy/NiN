@@ -4,7 +4,8 @@
   "outputDirectory": "dist",
   "functions": {
     "api/handler.js": {
-      "maxDuration": 60
+      "maxDuration": 60,
+      "includeFiles": "prompts/**"
     }
   },
   "rewrites": [
