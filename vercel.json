@@ -3,9 +3,6 @@
   "buildCommand": "vite build && npm run build:api",
   "outputDirectory": "dist",
   "functions": {
-    "api/kraken/status.js": {
-      "maxDuration": 60
-    },
     "api/handler.js": {
       "maxDuration": 60
     },
@@ -14,7 +11,11 @@
     }
   },
   "rewrites": [
+    { "source": "/api/kraken/status", "destination": "/api/handler" },
     { "source": "/api/kraken/dca", "destination": "/api/handler" },
+    { "source": "/api/kraken/test-order", "destination": "/api/handler" },
+    { "source": "/api/kraken/orders", "destination": "/api/handler" },
+    { "source": "/api/kraken/orders/:path*", "destination": "/api/handler" },
     { "source": "/api/execute-kraken", "destination": "/api/handler" },
     { "source": "/api/execute-order", "destination": "/api/handler" },
     { "source": "/api/health", "destination": "/api/handler" },

@@ -556,13 +556,45 @@ export default function AgentCanvas() {
       });
       const data = await res.json();
       if (data.success) {
-        setActionStatus(`Order executed on Kraken Pro: ${data.limb} ${amountUSD} filled.`);
+        const txid = data.orderResult?.txid;
+        setActionStatus(
+          `Order accepted by Kraken Pro: ${data.limb} $${amountUSD} @ ${data.orderResult?.status ?? 'FILLED'}` +
+            (txid ? ` · txid ${txid}` : '')
+        );
         fetchExecutionStatus();
       } else {
-        setActionStatus(`⛔ Order abgelehnt: ${data.error || 'Check exchange connection'}`);
+        setActionStatus(`⛔ Order abgelehnt: ${data.error || data.orderResult?.error || 'Check exchange connection'}`);
       }
     } catch (e: any) {
       setActionStatus(`Execution error: ${e.message}`);
+    } finally {
+      setIsExecutingAction(false);
+    }
+  };
+
+  // Dry-run an order against Kraken (--validate): Kraken authenticates and
+  // checks the order but does NOT place it. Surfaces Kraken's real answer.
+  const handleValidateOrder = async (asset: 'BTC' | 'SOL', amountUSD: number) => {
+    setIsExecutingAction(true);
+    setActionStatus(`Validating ${asset} ${amountUSD} order against Kraken (dry-run, no order placed)...`);
+    try {
+      const res = await fetch('/api/kraken/test-order', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pair: asset === 'BTC' ? 'BTCUSD' : 'SOLUSD', type: 'buy', ordertype: 'market', volume: 0.001 })
+      });
+      const data = await res.json();
+      if (data.validated) {
+        setActionStatus(
+          `✅ Kraken VALIDATED the order${data.txid ? ` (ref ${data.txid})` : ''}` +
+            (data.descr ? ` — "${data.descr}"` : '') +
+            '. Credentials, permissions and parameters are accepted.'
+        );
+      } else {
+        setActionStatus(`⛔ Kraken rejected the validation: ${data.error || data.stderrTail || 'unknown reason'}`);
+      }
+    } catch (e: any) {
+      setActionStatus(`Validation error: ${e.message}`);
     } finally {
       setIsExecutingAction(false);
     }
@@ -700,6 +732,15 @@ export default function AgentCanvas() {
                       L5: SOL DCA ($75)
                     </button>
                   </div>
+                  <button
+                    onClick={() => handleValidateOrder('BTC', 150)}
+                    disabled={isExecutingAction || !executionTelemetry?.connected}
+                    title="Dry-run against Kraken (--validate): checks credentials, permissions and order params without placing an order"
+                    className="w-full p-1.5 bg-slate-900/80 hover:bg-slate-800 border border-slate-600/60 text-slate-300 rounded text-[10px] font-bold transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-1.5"
+                  >
+                    <ShieldCheck className="w-3 h-3" />
+                    Validate Order with Kraken (dry-run, no funds moved)
+                  </button>
                   {actionStatus && (
                     <div className="p-2 bg-slate-900 border border-slate-700 rounded text-[10px] text-cyan-300">
                       {actionStatus}
@@ -722,10 +763,19 @@ export default function AgentCanvas() {
                           <span className="text-emerald-400 font-bold mr-1.5">{ord.type}</span>
                           <span className="text-slate-200">{ord.volume}</span>
                           <span className="text-slate-500 text-[9px] ml-1">({ord.limb})</span>
+                          <span className={`ml-1.5 text-[8px] font-bold px-1 rounded ${
+                            ord.status === 'FILLED'
+                              ? 'bg-emerald-500/15 text-emerald-400'
+                              : ord.status === 'PENDING'
+                                ? 'bg-amber-500/15 text-amber-400'
+                                : 'bg-red-500/15 text-red-400'
+                          }`}>
+                            {ord.status ?? 'UNKNOWN'}
+                          </span>
                         </div>
                         <div className="text-right">
                           <div className="text-cyan-300">{ord.price}</div>
-                          <div className="text-slate-600 text-[8px]">{ord.time}</div>
+                          <div className="text-slate-600 text-[8px]" title={ord.id}>{ord.time}</div>
                         </div>
                       </div>
                     )) || (

@@ -73,8 +73,20 @@ export async function runAutoDcaWorker(res: ServerResponse, executor: KrakenOrde
     const dipPct = ((last - reference) / reference) * 100;
     if (dipPct <= cfg.dipThresholdPct) {
       const order = await executor.executeDca(cfg.limb, cfg.asset, cfg.amountUSD);
-      references[cfg.asset] = last;
-      results.push({ asset: cfg.asset, action: 'DCA_EXECUTED', dipPct: Number(dipPct.toFixed(2)), order });
+      // Only re-baseline the reference when Kraken actually accepted the
+      // order — on a rejection the dip stays armed for the next run.
+      if (order.success) {
+        references[cfg.asset] = last;
+      }
+      results.push({
+        asset: cfg.asset,
+        action: order.success ? 'DCA_EXECUTED' : 'DCA_REJECTED',
+        dipPct: Number(dipPct.toFixed(2)),
+        status: order.status ?? null,
+        txid: order.txid ?? null,
+        error: order.error ?? null,
+        order,
+      });
     } else {
       results.push({ asset: cfg.asset, action: 'NO_DIP', dipPct: Number(dipPct.toFixed(2)), reference });
     }

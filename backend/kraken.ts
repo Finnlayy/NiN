@@ -137,6 +137,104 @@ function priceOf(quote: Record<string, unknown> | null): number | null {
   return Number.isFinite(price) && price > 0 ? price : null;
 }
 
+/**
+ * Deep-search a parsed Kraken CLI response for the first `txid` value
+ * (string or array) — the authoritative "Kraken accepted the order" signal.
+ */
+function findTxid(payload: unknown, depth = 0): string | null {
+  if (!payload || typeof payload !== 'object' || depth > 6) {
+    return null;
+  }
+  if (Array.isArray(payload)) {
+    for (const item of payload) {
+      const found = findTxid(item, depth + 1);
+      if (found) {
+        return found;
+      }
+    }
+    return null;
+  }
+  const record = payload as Record<string, unknown>;
+  const direct = record.txid;
+  if (typeof direct === 'string' && direct) {
+    return direct;
+  }
+  if (Array.isArray(direct) && direct.length > 0 && typeof direct[0] === 'string') {
+    return direct[0];
+  }
+  for (const value of Object.values(record)) {
+    if (value && typeof value === 'object') {
+      const found = findTxid(value, depth + 1);
+      if (found) {
+        return found;
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Deep-search for an error message (`error` / `errors` fields, string or
+ * array of strings). Kraken answers rejections both via non-zero exit codes
+ * and in-band error payloads.
+ */
+function findErrorMessage(payload: unknown, depth = 0): string | null {
+  if (!payload || typeof payload !== 'object' || depth > 6) {
+    return null;
+  }
+  const record = payload as Record<string, unknown>;
+  for (const key of ['error', 'errors']) {
+    const value = record[key];
+    if (typeof value === 'string' && value) {
+      return value.slice(0, 300);
+    }
+    if (Array.isArray(value) && value.length > 0 && typeof value[0] === 'string') {
+      return value.slice(0, 3).join(' | ').slice(0, 300);
+    }
+  }
+  for (const value of Object.values(record)) {
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      const found = findErrorMessage(value, depth + 1);
+      if (found) {
+        return found;
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Extract the human-readable order description ("buy 0.00100000 BTCUSD @
+ * market") from a Kraken CLI order response when present.
+ */
+function findDescription(payload: unknown, depth = 0): string | null {
+  if (!payload || typeof payload !== 'object' || depth > 6) {
+    return null;
+  }
+  const record = payload as Record<string, unknown>;
+  for (const key of ['descr', 'description']) {
+    const value = record[key];
+    if (typeof value === 'string' && value) {
+      return value.slice(0, 200);
+    }
+    if (value && typeof value === 'object') {
+      const nested = (value as Record<string, unknown>).order;
+      if (typeof nested === 'string' && nested) {
+        return nested.slice(0, 200);
+      }
+    }
+  }
+  for (const value of Object.values(record)) {
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      const found = findDescription(value, depth + 1);
+      if (found) {
+        return found;
+      }
+    }
+  }
+  return null;
+}
+
 function limb(name: string, pair: string, mode: string, online: boolean, interval?: string) {
   return {
     name,
@@ -370,6 +468,17 @@ export class KrakenOrderExecutor {
     };
   }
 
+  public getRecentOrders(): KrakenRecentOrder[] {
+    return this.recentOrdersList.slice();
+  }
+
+  private recordOrder(entry: KrakenRecentOrder): void {
+    this.recentOrdersList.unshift(entry);
+    if (this.recentOrdersList.length > 25) {
+      this.recentOrdersList.length = 25;
+    }
+  }
+
   async executeOrder(
     req: KrakenOrderRequest,
     limbContext?: { limb: 4 | 5; name: string }
@@ -407,7 +516,20 @@ export class KrakenOrderExecutor {
     }
 
     const result = await this.runCli(args);
+    const timestamp = new Date().toISOString();
+
     if (!result.ok) {
+      this.recordOrder({
+        id: `rejected-${Date.now()}`,
+        time: timestamp,
+        limb: limbName,
+        type: side === 'sell' ? 'SELL' : 'BUY',
+        pair: req.pair,
+        volume: String(req.volume),
+        price: req.price !== undefined ? String(req.price) : 'market',
+        status: 'REJECTED',
+        venue: 'Kraken Pro',
+      });
       return {
         success: false,
         connected: true,
@@ -417,7 +539,7 @@ export class KrakenOrderExecutor {
         type: req.type,
         volume: req.volume,
         limb: limbName,
-        timestamp: new Date().toISOString(),
+        timestamp,
       };
     }
 
@@ -428,11 +550,135 @@ export class KrakenOrderExecutor {
       parsed = { raw: result.stdout };
     }
 
+    // A zero exit code alone does NOT mean Kraken accepted the order — the
+    // authoritative acceptance signal is a txid in the response payload.
+    const txid = findTxid(parsed);
+    const inBandError = findErrorMessage(parsed);
+    const descr = findDescription(parsed);
+
+    if (!txid) {
+      const reason = inBandError || 'Kraken response contained no txid; order was NOT accepted.';
+      this.recordOrder({
+        id: `rejected-${Date.now()}`,
+        time: timestamp,
+        limb: limbName,
+        type: side === 'sell' ? 'SELL' : 'BUY',
+        pair: req.pair,
+        volume: String(req.volume),
+        price: req.price !== undefined ? String(req.price) : 'market',
+        status: 'REJECTED',
+        venue: 'Kraken Pro',
+      });
+      return {
+        success: false,
+        connected: true,
+        error: reason,
+        status: 'REJECTED',
+        pair: req.pair,
+        type: req.type,
+        volume: req.volume,
+        limb: limbName,
+        timestamp,
+        kraken: parsed,
+      };
+    }
+
+    this.recordOrder({
+      id: txid,
+      time: timestamp,
+      limb: limbName,
+      type: side === 'sell' ? 'SELL' : 'BUY',
+      pair: req.pair,
+      volume: String(req.volume),
+      price: req.price !== undefined ? String(req.price) : 'market',
+      // Market orders on Kraken either fill immediately or report the open
+      // state; without a follow-up query-orders round-trip, PENDING is the
+      // honest label until proven filled.
+      status: req.ordertype === 'market' ? 'FILLED' : 'PENDING',
+      venue: 'Kraken Pro',
+    });
+
     return {
       success: true,
       connected: true,
       limb: limbName,
-      ...(parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : { raw: result.stdout }),
+      status: req.ordertype === 'market' ? 'FILLED' : 'PENDING',
+      txid,
+      descr,
+      pair: req.pair,
+      type: req.type,
+      volume: req.volume,
+      timestamp,
+      kraken: parsed,
+    };
+  }
+
+  /**
+   * Dry-run an order against Kraken (`kraken order ... --validate`): Kraken
+   * authenticates the request, checks permissions, balance and order
+   * parameters, and returns its real answer WITHOUT placing the order.
+   */
+  async validateOrder(req: KrakenOrderRequest): Promise<Record<string, unknown>> {
+    await this.ensureCli();
+    if (!this.hasNativeCli() || !this.cliPath) {
+      return {
+        validated: false,
+        connected: false,
+        error: 'NO_KRAKEN_CONNECTION: Kraken CLI binary not found.',
+      };
+    }
+    if (!this.hasApiCredentials()) {
+      return {
+        validated: false,
+        connected: true,
+        error: 'NO_CREDENTIALS: KRAKEN_API_KEY / KRAKEN_API_SECRET missing.',
+      };
+    }
+
+    const side = req.type === 'sell' ? 'sell' : 'buy';
+    const args = [
+      'order',
+      side,
+      req.pair,
+      String(req.volume),
+      '--type',
+      req.ordertype,
+      '--validate',
+      '-o',
+      'json',
+      '--yes',
+    ];
+    if (req.price !== undefined) {
+      args.push('--price', String(req.price));
+    }
+
+    const result = await this.runCli(args);
+    if (!result.ok) {
+      return {
+        validated: false,
+        connected: true,
+        error: quoteError(result.stderr, 'Kraken CLI rejected the validation request.'),
+        stderrTail: quoteError(result.stderr, ''),
+        timestamp: new Date().toISOString(),
+      };
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = parseJson(result.stdout);
+    } catch {
+      parsed = { raw: result.stdout };
+    }
+    const txid = findTxid(parsed);
+    const errorMessage = findErrorMessage(parsed);
+    return {
+      validated: Boolean(txid) && !errorMessage,
+      connected: true,
+      txid,
+      descr: findDescription(parsed),
+      error: errorMessage ?? (txid ? null : 'Kraken returned no txid for the validated order.'),
+      kraken: parsed,
+      timestamp: new Date().toISOString(),
     };
   }
 

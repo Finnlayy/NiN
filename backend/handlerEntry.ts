@@ -5,6 +5,11 @@ import { KrakenOrderExecutor } from './kraken';
 
 export const maxDuration = 60;
 
+// Module-level singleton: keeps in-memory state (recent order history) across
+// warm invocations of this function. A per-request executor would silently
+// drop the order history every time.
+const sharedExecutor = new KrakenOrderExecutor();
+
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
   const payload = JSON.stringify(body);
   res.writeHead(status, {
@@ -24,7 +29,7 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
  */
 export default async function handler(req: IncomingMessage, res: ServerResponse): Promise<void> {
   try {
-    const executor = new KrakenOrderExecutor();
+    const executor = sharedExecutor;
 
     // Routes that only exist on the dev server get a Vercel function here:
     // /api/health, /api/ai/*, /api/bots*, /api/worker/dca
