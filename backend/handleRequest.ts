@@ -180,7 +180,12 @@ export async function handleRequest(req: IncomingMessage, res: ServerResponse): 
         });
         return true;
       }
-      sendJson(res, 200, { ok: true, login: result.login, id: result.id });
+      sendJson(res, 200, {
+        ok: true,
+        login: result.login ?? null,
+        id: result.id ?? null,
+        repositories: result.repositories,
+      });
       return true;
     }
 

@@ -30,10 +30,10 @@ export async function resolveBearerToken(options: {
 }
 
 export type GitHubConnectResult =
-  | { ok: true; status: number; login?: string; id?: number }
+  | { ok: true; status: number; login?: string; id?: number; repositories: number }
   | { ok: false; status: number; missing?: string; error: string };
 
-/** Call GitHub as the Connect app. A missing connector uid is a 503, not a guessed token. */
+/** Call GitHub as the Connect app installation. A missing connector uid is a 503, not a guessed token. */
 export async function fetchGitHubUser(connectorUid: string | undefined): Promise<GitHubConnectResult> {
   const connector = connectorUid?.trim();
   if (!connector) {
@@ -56,17 +56,19 @@ export async function fetchGitHubUser(connectorUid: string | undefined): Promise
 
   try {
     const token = await getToken(connector, { subject: { type: 'app' } });
-    const response = await fetch('https://api.github.com/user', {
+    // Installation tokens cannot call /user. List the repos this app install can see.
+    const response = await fetch('https://api.github.com/installation/repositories?per_page=1', {
       headers: {
         Authorization: `Bearer ${token}`,
         Accept: 'application/vnd.github+json',
         'User-Agent': 'neural-orchestrator',
+        'X-GitHub-Api-Version': '2022-11-28',
       },
     });
     const body = (await response.json().catch(() => ({}))) as {
-      login?: string;
-      id?: number;
+      total_count?: number;
       message?: string;
+      repositories?: Array<{ owner?: { login?: string; id?: number } }>;
     };
 
     if (!response.ok) {
@@ -77,7 +79,14 @@ export async function fetchGitHubUser(connectorUid: string | undefined): Promise
       };
     }
 
-    return { ok: true, status: 200, login: body.login, id: body.id };
+    const owner = body.repositories?.[0]?.owner;
+    return {
+      ok: true,
+      status: 200,
+      login: owner?.login,
+      id: owner?.id,
+      repositories: body.total_count ?? body.repositories?.length ?? 0,
+    };
   } catch (error) {
     return {
       ok: false,

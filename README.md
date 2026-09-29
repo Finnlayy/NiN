@@ -37,7 +37,7 @@ Connector-UIDs (keine Secrets) stehen in `.env.local`:
 
 - `CONNECT_GEMINI` — Bearer-Token für Gemini, sonst `GEMINI_API_KEY`
 - `CONNECT_ONEPROVIDER` — Bearer-Token für OneProvider, sonst `ONEPROVIDER_KEY`
-- `CONNECT_GITHUB` — `GET /api/connect/github` ruft die GitHub-User-API auf
+- `CONNECT_GITHUB` — `GET /api/connect/github` lists the repositories the GitHub App installation can access
 
 Connector anlegen (Browser-Zustimmung nötig, aus diesem Verzeichnis):
 
