@@ -51,6 +51,37 @@ const PAPER_WORKSPACE_PREFIX = 'nin-paper';
 
 const PAPER_STARTING_USD = 10000;
 
+export const GRAVITY_PAPER_WORKSPACE = `${PAPER_WORKSPACE_PREFIX}-gravity`;
+
+export type ExecutionMode = 'paper' | 'real';
+
+/**
+ * Where orders go. Paper is the default: the live account is not funded, and
+ * the paper ledgers are the training ground. Set KRAKEN_EXECUTION_MODE=real
+ * to send orders to Kraken Pro first.
+ */
+export function executionMode(): ExecutionMode {
+  return (process.env.KRAKEN_EXECUTION_MODE || 'paper').trim().toLowerCase() === 'real' ? 'real' : 'paper';
+}
+
+export interface PaperWorkspaceReport {
+  workspace: string;
+  currentValue: number | null;
+  startingBalance: number | null;
+  unrealizedPnl: number | null;
+  totalTrades: number | null;
+  valuationComplete: boolean;
+}
+
+export interface PaperFill {
+  id: string;
+  pair: string;
+  side: 'buy' | 'sell';
+  price: number;
+  volume: number;
+  time: string;
+}
+
 function releaseAssetName(): string {
   return process.arch === 'arm64'
     ? 'kraken-cli-aarch64-unknown-linux-gnu.tar.gz'
@@ -115,7 +146,19 @@ function parseJson(stdout: string): unknown {
   if (!trimmed) {
     return null;
   }
-  return JSON.parse(trimmed);
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    const lines = trimmed.split('\n').map((line) => line.trim()).filter(Boolean);
+    for (let i = lines.length - 1; i >= 0; i -= 1) {
+      try {
+        return JSON.parse(lines[i]);
+      } catch {
+        /* a tracing line may precede the payload */
+      }
+    }
+    throw new Error('not json');
+  }
 }
 
 function quoteError(stderr: string, fallback: string): string {
@@ -273,6 +316,9 @@ export class KrakenOrderExecutor {
   // One Kraken paper workspace per bot/limb (key = workspace name) so each
   // strategy keeps its own isolated virtual ledger.
   private paperWorkspaces = new Map<string, Promise<boolean>>();
+  // The paper CLI locks its journal. Overlapping processes return an empty
+  // history, so every invocation on this executor waits its turn.
+  private cliChain: Promise<void> = Promise.resolve();
 
   constructor() {
     this.cliPath = this.resolveCliPath();
@@ -335,7 +381,16 @@ export class KrakenOrderExecutor {
     return Boolean(process.env.KRAKEN_API_KEY && process.env.KRAKEN_API_SECRET);
   }
 
-  private async runCli(args: string[], extraEnv: NodeJS.ProcessEnv = {}): Promise<CliResult> {
+  private runCli(args: string[], extraEnv: NodeJS.ProcessEnv = {}): Promise<CliResult> {
+    const run = this.cliChain.then(() => this.execCli(args, extraEnv));
+    this.cliChain = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
+  private async execCli(args: string[], extraEnv: NodeJS.ProcessEnv = {}): Promise<CliResult> {
     const cliPath = this.hasNativeCli() ? this.cliPath : null;
     if (!cliPath) {
       return {
@@ -427,7 +482,7 @@ export class KrakenOrderExecutor {
     }
 
     const started = Date.now();
-    const [versionRun, statusRun, tickerRun, paper, balanceRun] = await Promise.all([
+    const [versionRun, statusRun, tickerRun, paper, balanceRun, gravityPaper, gravityFills] = await Promise.all([
       this.cliVersion ? Promise.resolve(null) : this.runCli(['--version']),
       this.runCli(['status', '-o', 'json']),
       this.runCli(['ticker', 'BTCUSD', 'SOLUSD', '-o', 'json']),
@@ -437,6 +492,8 @@ export class KrakenOrderExecutor {
       // Real-account balance (no KRAKEN_WORKSPACE) so callers can tell
       // whether the next fill will be real or paper. Never fails status.
       this.runCli(['balance', '-o', 'json']),
+      this.paperWorkspaceReport(GRAVITY_PAPER_WORKSPACE),
+      this.paperFills(GRAVITY_PAPER_WORKSPACE),
     ]);
     const latencyMs = Date.now() - started;
 
@@ -525,6 +582,9 @@ export class KrakenOrderExecutor {
       ticker,
       paper,
       realBalance,
+      executionMode: executionMode(),
+      gravityPaper,
+      gravityFills,
       durableState: isDurableStoreEnabled(),
       limbs: {
         limb_1: limb('Swarm Limb 1 (Scout Node)', 'BTCUSD', 'Trigger Scout Tranche', true),
@@ -778,6 +838,7 @@ export class KrakenOrderExecutor {
       `${PAPER_WORKSPACE_PREFIX}-limb-4`,
       `${PAPER_WORKSPACE_PREFIX}-limb-5`,
       `${PAPER_WORKSPACE_PREFIX}-default`,
+      GRAVITY_PAPER_WORKSPACE,
       ...this.paperWorkspaces.keys(),
     ]);
     const entries = await Promise.all(
@@ -803,6 +864,80 @@ export class KrakenOrderExecutor {
   }
 
   /**
+   * Marked equity of one paper workspace (`kraken workspace status`).
+   * Null when the ledger cannot be created.
+   */
+  async paperWorkspaceReport(workspace: string): Promise<PaperWorkspaceReport | null> {
+    const ready = await this.ensurePaperWorkspace(workspace);
+    if (!ready) return null;
+    const run = await this.runCli(['workspace', 'status', workspace, '-o', 'json'], { KRAKEN_WORKSPACE: workspace });
+    if (!run.ok) return null;
+    try {
+      const parsed = parseJson(run.stdout) as Record<string, unknown>;
+      const currentValue = typeof parsed.current_value === 'number' ? parsed.current_value : Number(parsed.current_value);
+      const startingBalance = typeof parsed.starting_balance === 'number' ? parsed.starting_balance : Number(parsed.starting_balance);
+      const unrealizedPnl = typeof parsed.unrealized_pnl === 'number' ? parsed.unrealized_pnl : Number(parsed.unrealized_pnl);
+      const totalTrades = typeof parsed.total_trades === 'number' ? parsed.total_trades : Number(parsed.total_trades);
+      return {
+        workspace,
+        currentValue: Number.isFinite(currentValue) ? currentValue : null,
+        startingBalance: Number.isFinite(startingBalance) ? startingBalance : null,
+        unrealizedPnl: Number.isFinite(unrealizedPnl) ? unrealizedPnl : null,
+        totalTrades: Number.isFinite(totalTrades) ? totalTrades : null,
+        valuationComplete: parsed.valuation_complete === true,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  /** Recent paper fills for one workspace, oldest first, capped. */
+  async paperFills(workspace: string, limit = 20): Promise<PaperFill[]> {
+    const ready = await this.ensurePaperWorkspace(workspace);
+    if (!ready) return [];
+    const run = await this.runCli(['paper', 'history', '-o', 'json'], { KRAKEN_WORKSPACE: workspace });
+    if (!run.ok) return [];
+    try {
+      const parsed = parseJson(run.stdout) as { trades?: unknown };
+      if (!Array.isArray(parsed.trades)) return [];
+      const fills: PaperFill[] = [];
+      for (const row of parsed.trades) {
+        if (!row || typeof row !== 'object') continue;
+        const rec = row as Record<string, unknown>;
+        const price = Number(rec.price);
+        const volume = Number(rec.volume);
+        if (!Number.isFinite(price) || !Number.isFinite(volume)) continue;
+        fills.push({
+          id: String(rec.id ?? ''),
+          pair: String(rec.pair ?? ''),
+          side: rec.side === 'sell' ? 'sell' : 'buy',
+          price,
+          volume,
+          time: String(rec.time ?? ''),
+        });
+      }
+      return fills.slice(-Math.max(1, limit));
+    } catch {
+      return [];
+    }
+  }
+
+  /** Available balance of one asset on a paper workspace, or null if unknown. */
+  async paperAssetBalance(workspace: string, asset: string): Promise<number | null> {
+    const ready = await this.ensurePaperWorkspace(workspace);
+    if (!ready) return null;
+    const run = await this.runCli(['balance', '-o', 'json'], { KRAKEN_WORKSPACE: workspace });
+    if (!run.ok) return null;
+    try {
+      const parsed = parseJson(run.stdout) as { balances?: Record<string, { available?: unknown }> };
+      const available = Number(parsed?.balances?.[asset]?.available);
+      return Number.isFinite(available) ? available : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * Execute an order against the paper ledger (same args as a live order —
    * the CLI routes it because KRAKEN_WORKSPACE scopes the invocation to the
    * paper workspace).
@@ -811,7 +946,7 @@ export class KrakenOrderExecutor {
     args: string[],
     req: KrakenOrderRequest,
     limbName: string,
-    limbContext?: { limb: 4 | 5; name: string }
+    limbContext?: { limb: number; name: string }
   ): Promise<Record<string, unknown>> {
     const timestamp = new Date().toISOString();
     // Every bot gets its own paper sub-account so ledgers stay isolated.
@@ -897,7 +1032,7 @@ export class KrakenOrderExecutor {
 
   async executeOrder(
     req: KrakenOrderRequest,
-    limbContext?: { limb: 4 | 5; name: string }
+    limbContext?: { limb: number; name: string }
   ): Promise<Record<string, unknown>> {
     const limbName = limbContext ? limbContext.name : 'Unknown Limb';
     await this.ensureCli();
@@ -929,6 +1064,10 @@ export class KrakenOrderExecutor {
     ];
     if (req.price !== undefined) {
       args.push('--price', String(req.price));
+    }
+
+    if (executionMode() === 'paper') {
+      return this.executePaperOrder(args, req, limbName, limbContext);
     }
 
     const result = await this.runCli(args);

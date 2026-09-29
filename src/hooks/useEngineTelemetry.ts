@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { ensureLiveGravityPoller, subscribeLiveGravity } from '../utils/liveGravity';
 
 export interface MicrostructurePayload {
   imbalance_ratio: number;
@@ -184,7 +185,26 @@ export function useEngineTelemetry() {
 
     connect();
 
+    ensureLiveGravityPoller();
+    const unsubscribe = subscribeLiveGravity((snap) => {
+      if (!active) return;
+      lastEventTimeRef.current = Date.now();
+      setGravity({
+        l2_depth: snap.l2,
+        l3_iceberg: snap.iceberg,
+        polymarket_prob: snap.poly,
+        v_total: snap.params.w_vis * snap.l2 + snap.params.w_blind * snap.iceberg + snap.params.w_poly * snap.poly,
+      });
+      setRegime({
+        cluster_id: 0,
+        confidence: Math.min(1, Math.abs((snap.l2 - snap.iceberg))),
+        is_forbidden_zone: snap.forbidden ? 1 : 0,
+      });
+      setConnectionState((prev) => (prev === 'CONNECTED_LIVE' ? prev : 'STALE_CACHE_DEGRADED'));
+    });
+
     return () => {
+      unsubscribe();
       active = false;
       if (reconnectTimeout) clearTimeout(reconnectTimeout);
       if (eventSourceRef.current) {

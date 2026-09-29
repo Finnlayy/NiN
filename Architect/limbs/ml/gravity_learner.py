@@ -253,6 +253,10 @@ class GravityFieldLearner:
             "directional": self.directional,
             "skipped": self.skipped,
             "resolved": self.resolved,
+            "pending": [
+                {"x": [float(component) for component in item["x"]], "mid": float(item["mid"])}
+                for item in self._pending
+            ],
         }
 
     @classmethod
@@ -284,6 +288,21 @@ class GravityFieldLearner:
         ):
             if field in payload:
                 setattr(learner, field, int(payload[field]))
+        pending = payload.get("pending")
+        if isinstance(pending, list):
+            restored: list[dict[str, Any]] = []
+            for item in pending:
+                if not isinstance(item, dict):
+                    continue
+                raw_x = item.get("x")
+                mid = _as_finite(item.get("mid"))
+                if not isinstance(raw_x, list) or len(raw_x) != 3 or mid is None:
+                    continue
+                components = tuple(_as_finite(value) for value in raw_x)
+                if any(component is None for component in components):
+                    continue
+                restored.append({"x": components, "mid": mid})
+            learner._pending = restored
         return learner
 
     # -- log replay ---------------------------------------------------------

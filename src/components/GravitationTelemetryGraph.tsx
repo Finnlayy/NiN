@@ -19,6 +19,8 @@ import {
   GravityForceCurvePoint
 } from '../utils/omegaLogic';
 import { getLiveSpot } from '../utils/liveSpot';
+import { DEFAULT_GRAVITY_PARAMS, type GravityParams } from '../utils/gravityMath';
+import { ensureLiveGravityPoller, getLiveOmegaSnapshot, subscribeLiveGravity } from '../utils/liveGravity';
 
 interface GravitationTelemetryGraphProps {
   gravityField?: GravityFieldState;
@@ -55,9 +57,10 @@ export default function GravitationTelemetryGraph({
   const [showNet, setShowNet] = useState(true);
 
   // Simulation Sliders
-  const [l2Depth, setL2Depth] = useState(1450);
-  const [icebergDepth, setIcebergDepth] = useState(2200);
-  const [polyProb, setPolyProb] = useState(0.78);
+  const [l2Depth, setL2Depth] = useState(0.5);
+  const [icebergDepth, setIcebergDepth] = useState(0.5);
+  const [polyProb, setPolyProb] = useState(0.5);
+  const [gravityParams, setGravityParams] = useState<GravityParams>(DEFAULT_GRAVITY_PARAMS);
   const [currentSpot, setCurrentSpot] = useState(spotPrice);
 
   // Interactive Hover State
@@ -70,15 +73,14 @@ export default function GravitationTelemetryGraph({
     const now = Date.now();
     for (let i = 24; i >= 0; i--) {
       const t = now - i * 1500;
-      const forces = calculateGravitationForces(spotPrice, 1450, 2200, 0.78);
-      const jitter = Math.sin(i * 0.4) * 4;
+      const forces = calculateGravitationForces(spotPrice, 0.5, 0.5, 0.5);
       initial.push({
         timeLabel: new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
         timestamp: t,
-        fVis: Number((forces.forceVisible + jitter * 0.8).toFixed(2)),
-        fBlind: Number((forces.forceBlind - jitter * 0.5).toFixed(2)),
-        fPoly: Number((forces.forcePolymarket + jitter * 0.3).toFixed(2)),
-        fNet: Number((forces.forceNet + jitter * 0.5).toFixed(2)),
+        fVis: forces.forceVisible,
+        fBlind: forces.forceBlind,
+        fPoly: forces.forcePolymarket,
+        fNet: forces.forceNet,
       });
     }
     return initial;
@@ -91,24 +93,22 @@ export default function GravitationTelemetryGraph({
     }
   }, [gravityField?.spotPrice]);
 
-  // Live real-time tick for streaming mode and vector telemetry
+  const streamingRef = useRef(isStreaming);
+  streamingRef.current = isStreaming;
+
+  // Closed-candle field from the gravity worker. No random drift.
   useEffect(() => {
-    if (!isStreaming) return;
-
-    const interval = setInterval(() => {
-      // Natural micro-oscillations in orderbook depth and probability
-      const driftVis = (Math.random() - 0.48) * 15;
-      const driftBlind = (Math.random() - 0.49) * 20;
-      const driftPoly = (Math.random() - 0.48) * 0.005;
-
-      setL2Depth(prev => Math.max(500, Math.min(3000, Math.round(prev + driftVis))));
-      setIcebergDepth(prev => Math.max(800, Math.min(4500, Math.round(prev + driftBlind))));
-      setPolyProb(prev => Math.max(0.2, Math.min(0.98, Number((prev + driftPoly).toFixed(3)))));
-
-      const forces = calculateGravitationForces(currentSpot, l2Depth, icebergDepth, polyProb);
+    ensureLiveGravityPoller();
+    return subscribeLiveGravity((snap) => {
+      setL2Depth(snap.l2);
+      setIcebergDepth(snap.iceberg);
+      setPolyProb(snap.poly);
+      if (snap.spotPrice > 0) setCurrentSpot(snap.spotPrice);
+      setGravityParams(snap.params);
+      if (!streamingRef.current) return;
+      const forces = calculateGravitationForces(snap.spotPrice, snap.l2, snap.iceberg, snap.poly, snap.params);
       const now = Date.now();
-
-      setTimeSeries(prev => {
+      setTimeSeries((prev) => {
         const nextPoint: TimeSeriesDataPoint = {
           timeLabel: new Date(now).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
           timestamp: now,
@@ -120,20 +120,18 @@ export default function GravitationTelemetryGraph({
         const updated = [...prev, nextPoint];
         return updated.length > 30 ? updated.slice(updated.length - 30) : updated;
       });
-    }, 1500);
-
-    return () => clearInterval(interval);
-  }, [isStreaming, currentSpot, l2Depth, icebergDepth, polyProb]);
+    });
+  }, []);
 
   // Current Instantaneous Vector
   const vectorTelemetry: GravityForceVectorTelemetry = useMemo(() => {
-    return calculateGravitationForces(currentSpot, l2Depth, icebergDepth, polyProb);
-  }, [currentSpot, l2Depth, icebergDepth, polyProb]);
+    return calculateGravitationForces(currentSpot, l2Depth, icebergDepth, polyProb, gravityParams);
+  }, [currentSpot, l2Depth, icebergDepth, polyProb, gravityParams]);
 
   // Profile curve points across price spectrum
   const profilePoints: GravityForceCurvePoint[] = useMemo(() => {
-    return generateGravitationForceProfile(currentSpot, l2Depth, icebergDepth, polyProb, 2000, 60);
-  }, [currentSpot, l2Depth, icebergDepth, polyProb]);
+    return generateGravitationForceProfile(currentSpot, l2Depth, icebergDepth, polyProb, 2000, 60, gravityParams);
+  }, [currentSpot, l2Depth, icebergDepth, polyProb, gravityParams]);
 
   // Dimensions for SVG Graphs
   const width = 800;
@@ -146,7 +144,13 @@ export default function GravitationTelemetryGraph({
   // Coordinate scales for Profile Mode F(P)
   const minPrice = currentSpot - 2000;
   const maxPrice = currentSpot + 2000;
-  const maxAbsForce = 120; // -120N to +120N
+  const maxAbsForce = useMemo(() => {
+    let peak = 1;
+    for (const pt of profilePoints) {
+      peak = Math.max(peak, Math.abs(pt.fVis), Math.abs(pt.fBlind), Math.abs(pt.fPoly), Math.abs(pt.fNet));
+    }
+    return peak * 1.15;
+  }, [profilePoints]);
 
   const scaleXProfile = useCallback((p: number) => {
     return padX + ((p - minPrice) / (maxPrice - minPrice)) * plotWidth;
@@ -223,10 +227,12 @@ export default function GravitationTelemetryGraph({
   };
 
   const resetToLive = () => {
-    setL2Depth(1450);
-    setIcebergDepth(2200);
-    setPolyProb(0.78);
-    setCurrentSpot(spotPrice);
+    const live = getLiveOmegaSnapshot();
+    setL2Depth(live?.l2 ?? 0.5);
+    setIcebergDepth(live?.iceberg ?? 0.5);
+    setPolyProb(live?.poly ?? 0.5);
+    setGravityParams(live?.params ?? DEFAULT_GRAVITY_PARAMS);
+    setCurrentSpot(live?.spotPrice ?? spotPrice);
     if (onLogEvent) {
       onLogEvent("Reset Gravitation Field parameters to live exchange baseline.", 'success', 'Gravitation Telemetry');
     }
@@ -258,7 +264,7 @@ export default function GravitationTelemetryGraph({
               </span>
             </div>
             <p className="text-xs text-slate-400 mt-0.5">
-              Vektorieller Kraftgradient: <strong className="text-cyan-300">F_vis (25%)</strong> + <strong className="text-purple-300">F_blind (35%)</strong> + <strong className="text-amber-300">F_poly (40%)</strong>
+              Vektorieller Kraftgradient: <strong className="text-cyan-300">F_vis ({Math.round(gravityParams.w_vis * 100)}%)</strong> + <strong className="text-purple-300">F_blind ({Math.round(gravityParams.w_blind * 100)}%)</strong> + <strong className="text-amber-300">F_poly ({Math.round(gravityParams.w_poly * 100)}%)</strong>
             </p>
           </div>
         </div>
@@ -327,7 +333,7 @@ export default function GravitationTelemetryGraph({
               <span className="w-2.5 h-2.5 rounded-full bg-cyan-400" />
               <span className="text-cyan-300 font-bold uppercase">F_vis (L2 Tiefe)</span>
             </div>
-            <span className="text-[10px] text-slate-400 font-bold">w = 0.25</span>
+            <span className="text-[10px] text-slate-400 font-bold">w = {vectorTelemetry.weights.vis.toFixed(2)}</span>
           </div>
           <div className="flex items-baseline justify-between mt-2">
             <span className="text-2xl font-mono font-bold text-white tracking-tight">
@@ -345,7 +351,7 @@ export default function GravitationTelemetryGraph({
             </div>
           </div>
           <div className="flex items-center justify-between text-[10px] font-mono text-slate-400 mt-2 pt-2 border-t border-slate-800">
-            <span>Tiefe: <strong className="text-slate-200">{l2Depth.toLocaleString()} BTC</strong></span>
+            <span>Tiefe: <strong className="text-slate-200">{l2Depth.toFixed(3)}</strong></span>
             <span className="flex items-center gap-1 text-cyan-400/80">
               {showVis ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3 text-slate-500" />}
               {showVis ? 'Sichtbar' : 'Ausgeblendet'}
@@ -367,7 +373,7 @@ export default function GravitationTelemetryGraph({
               <span className="w-2.5 h-2.5 rounded-full bg-purple-400" />
               <span className="text-purple-300 font-bold uppercase">F_blind (Iceberg)</span>
             </div>
-            <span className="text-[10px] text-slate-400 font-bold">w = 0.35</span>
+            <span className="text-[10px] text-slate-400 font-bold">w = {vectorTelemetry.weights.blind.toFixed(2)}</span>
           </div>
           <div className="flex items-baseline justify-between mt-2">
             <span className="text-2xl font-mono font-bold text-white tracking-tight">
@@ -385,7 +391,7 @@ export default function GravitationTelemetryGraph({
             </div>
           </div>
           <div className="flex items-center justify-between text-[10px] font-mono text-slate-400 mt-2 pt-2 border-t border-slate-800">
-            <span>Schatten: <strong className="text-slate-200">{icebergDepth.toLocaleString()} BTC</strong></span>
+            <span>Schatten: <strong className="text-slate-200">{icebergDepth.toFixed(3)}</strong></span>
             <span className="flex items-center gap-1 text-purple-400/80">
               {showBlind ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3 text-slate-500" />}
               {showBlind ? 'Sichtbar' : 'Ausgeblendet'}
@@ -407,7 +413,7 @@ export default function GravitationTelemetryGraph({
               <span className="w-2.5 h-2.5 rounded-full bg-amber-400" />
               <span className="text-amber-300 font-bold uppercase">F_poly (Erwartung)</span>
             </div>
-            <span className="text-[10px] text-slate-400 font-bold">w = 0.40</span>
+            <span className="text-[10px] text-slate-400 font-bold">w = {vectorTelemetry.weights.poly.toFixed(2)}</span>
           </div>
           <div className="flex items-baseline justify-between mt-2">
             <span className="text-2xl font-mono font-bold text-white tracking-tight">
@@ -462,7 +468,7 @@ export default function GravitationTelemetryGraph({
           </div>
           <div className="flex items-center justify-between text-[10px] font-mono text-slate-400 mt-2 pt-2 border-t border-slate-800">
             <span>Delta: <strong className={vectorTelemetry.deltaPToAttractor >= 0 ? 'text-emerald-400' : 'text-rose-400'}>
-              {vectorTelemetry.deltaPToAttractor >= 0 ? `+${vectorTelemetry.deltaPToAttractor}` : vectorTelemetry.deltaPToAttractor} $
+              {vectorTelemetry.deltaPToAttractor >= 0 ? '+' : ''}{vectorTelemetry.deltaPToAttractor.toFixed(2)} $
             </strong></span>
             <span className="flex items-center gap-1 text-emerald-400">
               {showNet ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3 text-slate-500" />}
@@ -851,21 +857,21 @@ export default function GravitationTelemetryGraph({
               className={`flex items-center gap-1.5 transition-opacity ${showVis ? 'text-cyan-400' : 'text-slate-600'}`}
             >
               <span className="w-3.5 h-0.5 bg-cyan-400 border-b border-dashed" />
-              <span>F_vis (L2 Tiefe - 25%)</span>
+              <span>F_vis (L2 {(vectorTelemetry.weights.vis * 100).toFixed(0)}%)</span>
             </button>
             <button
               onClick={() => setShowBlind(!showBlind)}
               className={`flex items-center gap-1.5 transition-opacity ${showBlind ? 'text-purple-400' : 'text-slate-600'}`}
             >
               <span className="w-3.5 h-0.5 bg-purple-400 border-b border-dashed" />
-              <span>F_blind (Schatten - 35%)</span>
+              <span>F_blind ({(vectorTelemetry.weights.blind * 100).toFixed(0)}%)</span>
             </button>
             <button
               onClick={() => setShowPoly(!showPoly)}
               className={`flex items-center gap-1.5 transition-opacity ${showPoly ? 'text-amber-400' : 'text-slate-600'}`}
             >
               <span className="w-3.5 h-0.5 bg-amber-400 border-b border-dashed" />
-              <span>F_poly (Polymarket - 40%)</span>
+              <span>F_poly ({(vectorTelemetry.weights.poly * 100).toFixed(0)}%)</span>
             </button>
           </div>
 

@@ -4,7 +4,8 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import { getLivePrices } from './prices';
 import { getJson, setJson } from './stateStore';
-import type { KrakenOrderExecutor } from './kraken';
+import { executionMode, type KrakenOrderExecutor } from './kraken';
+import { rollingHighClose } from './candles';
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
   const payload = JSON.stringify(body);
@@ -22,8 +23,10 @@ function vercelTmp(file: string): string {
 // ---------------------------------------------------------------------------
 // Automatic DCA worker (L4 BTC / L5 SOL)
 // Runs via Vercel Cron (see vercel.json -> crons). Guarded so it is a safe
-// no-op unless explicitly armed with KRAKEN_AUTO_DCA=true AND API credentials
-// are present. Fires only on a >= 2.5% dip versus the stored reference price.
+// no-op unless explicitly armed with KRAKEN_AUTO_DCA=true. The dip is measured
+// against the highest close of the last 24 closed 1h candles. A stored mark
+// only stops a second buy against that same high. Paper mode does not need
+// live API credentials.
 // ---------------------------------------------------------------------------
 
 const DCA_REFERENCE_FILE = vercelTmp('dca-reference.json');
@@ -36,14 +39,28 @@ const DCA_CONFIG = [
  * Dip references, durably: the durable store wins (survives redeploys), the
  * local file is the fallback for un-provisioned deploys and local dev.
  */
-async function loadDcaReferences(): Promise<Record<string, number>> {
-  const stored = await getJson<Record<string, number>>('nin:dca:references');
-  if (stored && typeof stored === 'object' && Object.keys(stored).length > 0) {
-    return stored;
+interface DipMark {
+  high: number;
+}
+
+function normalizeMarks(raw: unknown): Record<string, DipMark> {
+  const out: Record<string, DipMark> = {};
+  if (!raw || typeof raw !== 'object') return out;
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (value && typeof value === 'object' && typeof (value as DipMark).high === 'number') {
+      out[key] = { high: (value as DipMark).high };
+    }
   }
+  return out;
+}
+
+async function loadDcaReferences(): Promise<Record<string, DipMark>> {
+  const stored = await getJson<Record<string, DipMark | number>>('nin:dca:references');
+  const fromStore = normalizeMarks(stored);
+  if (Object.keys(fromStore).length > 0) return fromStore;
   try {
     if (existsSync(DCA_REFERENCE_FILE)) {
-      return JSON.parse(readFileSync(DCA_REFERENCE_FILE, 'utf-8'));
+      return normalizeMarks(JSON.parse(readFileSync(DCA_REFERENCE_FILE, 'utf-8')));
     }
   } catch {
     /* fall through to empty */
@@ -51,8 +68,13 @@ async function loadDcaReferences(): Promise<Record<string, number>> {
   return {};
 }
 
+function boughtHigh(value: DipMark | number | undefined): number | null {
+  if (!value || typeof value === 'number') return null;
+  return typeof value.high === 'number' && Number.isFinite(value.high) ? value.high : null;
+}
+
 /** Persist references both locally and durably; both writes best-effort. */
-function saveDcaReferences(references: Record<string, number>): void {
+function saveDcaReferences(references: Record<string, DipMark>): void {
   try {
     writeFileSync(DCA_REFERENCE_FILE, JSON.stringify(references), 'utf-8');
   } catch {
@@ -97,23 +119,26 @@ export async function getDcaDipStatus(executor?: KrakenOrderExecutor): Promise<R
     prices = cg.prices;
     source = cg.source;
   }
-  const assets = DCA_CONFIG.map((cfg) => {
+  const assets = [];
+  for (const cfg of DCA_CONFIG) {
     const last = prices[cfg.asset] ?? null;
-    const reference = references[cfg.asset] ?? null;
+    const reference = await rollingHighClose(cfg.pair, 24, 60);
     const dipPct = last && reference ? Number((((last - reference) / reference) * 100).toFixed(2)) : null;
     const nearTrigger = typeof dipPct === 'number' && dipPct <= cfg.dipThresholdPct + 1.0;
-    return {
+    assets.push({
       asset: cfg.asset,
       pair: cfg.pair,
       amountUSD: cfg.amountUSD,
       thresholdPct: cfg.dipThresholdPct,
       last,
       reference,
+      referenceSource: '24h-closed-high',
+      boughtHigh: boughtHigh(references[cfg.asset]),
       dipPct,
       nearTrigger,
-      needsBaseline: reference === null,
-    };
-  });
+      needsBaseline: reference == null,
+    });
+  }
   return {
     checkedAt: new Date().toISOString(),
     priceSource: source,
@@ -131,7 +156,7 @@ export async function runAutoDcaWorker(res: ServerResponse, executor: KrakenOrde
     });
     return;
   }
-  if (!executor.hasApiCredentials()) {
+  if (!executor.hasApiCredentials() && executionMode() !== 'paper') {
     sendJson(res, 200, { ran: false, reason: 'NO_CREDENTIALS', hint: 'KRAKEN_API_KEY / KRAKEN_API_SECRET missing.' });
     return;
   }
@@ -145,24 +170,32 @@ export async function runAutoDcaWorker(res: ServerResponse, executor: KrakenOrde
       results.push({ asset: cfg.asset, action: 'SKIPPED', reason: 'NO_TICKER' });
       continue;
     }
-    const reference = references[cfg.asset];
+    const reference = await rollingHighClose(cfg.pair, 24, 60);
     if (!reference) {
-      references[cfg.asset] = last;
-      results.push({ asset: cfg.asset, action: 'BASELINE_SET', reference: last });
+      results.push({ asset: cfg.asset, action: 'SKIPPED', reason: 'NO_CANDLES' });
       continue;
     }
     const dipPct = ((last - reference) / reference) * 100;
+    const alreadyBought = boughtHigh(references[cfg.asset]);
     if (dipPct <= cfg.dipThresholdPct) {
+      if (alreadyBought != null && alreadyBought === reference) {
+        results.push({
+          asset: cfg.asset,
+          action: 'DIP_ALREADY_BOUGHT',
+          dipPct: Number(dipPct.toFixed(2)),
+          reference,
+        });
+        continue;
+      }
       const order = await executor.executeDca(cfg.limb, cfg.asset, cfg.amountUSD);
-      // Only re-baseline the reference when Kraken actually accepted the
-      // order — on a rejection the dip stays armed for the next run.
       if (order.success) {
-        references[cfg.asset] = last;
+        references[cfg.asset] = { high: reference };
       }
       results.push({
         asset: cfg.asset,
         action: order.success ? 'DCA_EXECUTED' : 'DCA_REJECTED',
         dipPct: Number(dipPct.toFixed(2)),
+        reference,
         status: order.status ?? null,
         txid: order.txid ?? null,
         error: order.error ?? null,

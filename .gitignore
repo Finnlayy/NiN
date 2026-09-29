@@ -2,6 +2,7 @@ node_modules/
 dist/
 dist-server/
 data/vectors/trace.json
+data/learning/store.json
 *.log
 .DS_Store
 .env

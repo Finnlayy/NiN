@@ -7,6 +7,13 @@
  */
 
 import { getLiveSpot } from './liveSpot';
+import {
+  computeForces,
+  DEFAULT_GRAVITY_PARAMS,
+  normalizeParams,
+  type GravityParams,
+} from './gravityMath';
+import { ensureLiveGravityPoller, getLiveOmegaSnapshot } from './liveGravity';
 
 export type SymbolLampState = 'GREEN_GLOW' | 'GREEN_SOLID' | 'YELLOW' | 'GRAY' | 'RED_GLOW';
 
@@ -325,44 +332,31 @@ export function calculateACPowerMetrics(
 }
 
 /**
- * Calculates 3-Component Gravity Field according to Blueprint §2
- * V_total = 0.25 V_vis + 0.35 V_blind + 0.40 V_poly
+ * 3-component field. V_total is the simplex-weighted sum of the unit
+ * features. F_net = sum w_i * (-k_i (P - P*_i)).
  */
 export function calculateGravityField(
   spotPrice: number,
-  visibleL2Depth: number = 1450,
-  blindIcebergDepth: number = 2200,
-  polymarketForwardProb: number = 0.78
+  visibleL2Depth: number = 0.5,
+  blindIcebergDepth: number = 0.5,
+  polymarketForwardProb: number = 0.5,
+  params: GravityParams = DEFAULT_GRAVITY_PARAMS,
 ): GravityFieldState {
-  const wVis = 0.25;
-  const wBlind = 0.35;
-  const wPoly = 0.40;
-
-  // Normalized potential energies incorporating orderbook depth and polymarket consensus
-  const depthFactor = visibleL2Depth > 0 ? Math.min(100, visibleL2Depth / 20) : 50;
-  const blindFactor = blindIcebergDepth > 0 ? Math.min(100, blindIcebergDepth / 25) : 50;
-  const vVis = Number(((Math.sin(spotPrice / 1000) * 12 + 45) * 0.5 + depthFactor * 0.5).toFixed(2));
-  const vBlind = Number(((Math.cos(spotPrice / 1200) * 18 + 55) * 0.5 + blindFactor * 0.5).toFixed(2));
-  const vPoly = Number(((1 - polymarketForwardProb) * 100).toFixed(2));
-
-  const vTotal = Number((wVis * vVis + wBlind * vBlind + wPoly * vPoly).toFixed(2));
-  
-  // Potential well target P* where -∇V = 0
-  const potentialMinimumPrice = Number((spotPrice + (polymarketForwardProb > 0.5 ? 450 : -320)).toFixed(2));
-  const gravityForce = Number(((potentialMinimumPrice - spotPrice) * 0.12).toFixed(2));
+  const weights = normalizeParams(params);
+  const forces = computeForces(spotPrice, spotPrice, visibleL2Depth, blindIcebergDepth, polymarketForwardProb, weights);
 
   return {
     spotPrice,
-    vVisible: vVis,
-    vBlind: vBlind,
-    vPolymarket: vPoly,
-    vTotal,
-    gravityForce,
-    potentialMinimumPrice,
+    vVisible: Number(forces.vVis.toFixed(4)),
+    vBlind: Number(forces.vBlind.toFixed(4)),
+    vPolymarket: Number(forces.vPoly.toFixed(4)),
+    vTotal: Number(forces.vTotal.toFixed(4)),
+    gravityForce: Number(forces.fNet.toFixed(2)),
+    potentialMinimumPrice: Number(forces.attractor.toFixed(2)),
     weights: {
-      vis: wVis,
-      blind: wBlind,
-      poly: wPoly,
+      vis: weights.w_vis,
+      blind: weights.w_blind,
+      poly: weights.w_poly,
     },
   };
 }
@@ -393,27 +387,14 @@ export interface GravityForceCurvePoint {
  */
 export function calculateGravitationForces(
   spotPrice: number,
-  visibleL2Depth: number = 1450,
-  blindIcebergDepth: number = 2200,
-  polymarketForwardProb: number = 0.78
+  visibleL2Depth: number = 0.5,
+  blindIcebergDepth: number = 0.5,
+  polymarketForwardProb: number = 0.5,
+  params: GravityParams = DEFAULT_GRAVITY_PARAMS,
 ): GravityForceVectorTelemetry {
-  const wVis = 0.25;
-  const wBlind = 0.35;
-  const wPoly = 0.40;
-
-  // Local component equilibrium shifts
-  const pStarVis = spotPrice + (visibleL2Depth - 1400) * 0.45;
-  const pStarBlind = spotPrice + (blindIcebergDepth - 2000) * 0.35;
-  const pStarPoly = spotPrice + (polymarketForwardProb - 0.5) * 1100;
-
-  const attractorPrice = Math.round(wVis * pStarVis + wBlind * pStarBlind + wPoly * pStarPoly);
-
-  // Instantaneous force vectors at spot price (F = -∇V = -k * (P - P*))
-  const forceVisible = Number(((pStarVis - spotPrice) * 0.12).toFixed(2));
-  const forceBlind = Number(((pStarBlind - spotPrice) * 0.15).toFixed(2));
-  const forcePolymarket = Number(((pStarPoly - spotPrice) * 0.18).toFixed(2));
-
-  const forceNet = Number((wVis * forceVisible + wBlind * forceBlind + wPoly * forcePolymarket).toFixed(2));
+  const weights = normalizeParams(params);
+  const forces = computeForces(spotPrice, spotPrice, visibleL2Depth, blindIcebergDepth, polymarketForwardProb, weights);
+  const forceNet = Number(forces.fNet.toFixed(2));
 
   let direction: GravityForceVectorTelemetry['direction'] = 'EQUILIBRIUM';
   if (forceNet > 2) direction = 'BULLISH';
@@ -421,14 +402,14 @@ export function calculateGravitationForces(
 
   return {
     spotPrice,
-    attractorPrice,
-    forceVisible,
-    forceBlind,
-    forcePolymarket,
+    attractorPrice: Math.round(forces.attractor),
+    forceVisible: Number(forces.fVis.toFixed(2)),
+    forceBlind: Number(forces.fBlind.toFixed(2)),
+    forcePolymarket: Number(forces.fPoly.toFixed(2)),
     forceNet,
-    weights: { vis: wVis, blind: wBlind, poly: wPoly },
+    weights: { vis: weights.w_vis, blind: weights.w_blind, poly: weights.w_poly },
     direction,
-    deltaPToAttractor: attractorPrice - spotPrice,
+    deltaPToAttractor: Math.round(forces.attractor) - spotPrice,
   };
 }
 
@@ -437,36 +418,29 @@ export function calculateGravitationForces(
  */
 export function generateGravitationForceProfile(
   spotPrice: number,
-  visibleL2Depth: number = 1450,
-  blindIcebergDepth: number = 2200,
-  polymarketForwardProb: number = 0.78,
+  visibleL2Depth: number = 0.5,
+  blindIcebergDepth: number = 0.5,
+  polymarketForwardProb: number = 0.5,
   rangeSpan: number = 2000,
-  steps: number = 50
+  steps: number = 50,
+  params: GravityParams = DEFAULT_GRAVITY_PARAMS,
 ): GravityForceCurvePoint[] {
-  const wVis = 0.25;
-  const wBlind = 0.35;
-  const wPoly = 0.40;
-
-  const pStarVis = spotPrice + (visibleL2Depth - 1400) * 0.45;
-  const pStarBlind = spotPrice + (blindIcebergDepth - 2000) * 0.35;
-  const pStarPoly = spotPrice + (polymarketForwardProb - 0.5) * 1100;
-
+  const weights = normalizeParams(params);
   const minP = spotPrice - rangeSpan;
   const maxP = spotPrice + rangeSpan;
-  const stepSize = (maxP - minP) / steps;
-
+  const stepSize = (maxP - minP) / Math.max(1, steps);
   const points: GravityForceCurvePoint[] = [];
 
   for (let i = 0; i <= steps; i++) {
     const p = Math.round(minP + i * stepSize);
-
-    // Forces with restoring springs + orderbook non-linearities
-    const fVis = Number((-(p - pStarVis) * 0.09 + Math.cos((p - spotPrice) / 140) * 8).toFixed(2));
-    const fBlind = Number((-(p - pStarBlind) * 0.12 + Math.sin((p - spotPrice) / 190) * 11).toFixed(2));
-    const fPoly = Number((-(p - pStarPoly) * 0.15).toFixed(2));
-    const fNet = Number((wVis * fVis + wBlind * fBlind + wPoly * fPoly).toFixed(2));
-
-    points.push({ price: p, fVis, fBlind, fPoly, fNet });
+    const forces = computeForces(p, spotPrice, visibleL2Depth, blindIcebergDepth, polymarketForwardProb, weights);
+    points.push({
+      price: p,
+      fVis: Number(forces.fVis.toFixed(2)),
+      fBlind: Number(forces.fBlind.toFixed(2)),
+      fPoly: Number(forces.fPoly.toFixed(2)),
+      fNet: Number(forces.fNet.toFixed(2)),
+    });
   }
 
   return points;
@@ -787,43 +761,79 @@ export function getLiveOmegaTelemetry(): {
   ecosystemLeaders: EcosystemLeader[];
   vault: DualStateVault;
 } {
-  const spotPrice = getLiveSpot('BTC', 64280.50);
-  const atr14 = 420.0;
+  ensureLiveGravityPoller();
+  const live = getLiveOmegaSnapshot();
+  const spotPrice = live && live.spotPrice > 0 ? live.spotPrice : getLiveSpot('BTC', 64280.50);
+  const atr14 = live?.atr14 && live.atr14 > 0 ? live.atr14 : 0;
+  const params = live?.params ?? DEFAULT_GRAVITY_PARAMS;
 
-  const viaNegativa = calculateViaNegativa(spotPrice, atr14, 60, 30, 30);
-  const gravityField = calculateGravityField(spotPrice, 1600, 2400, 0.82);
-  const acSystem = calculateACPowerMetrics(spotPrice - 380.5, spotPrice + 169.5, spotPrice - 460.5, spotPrice, atr14, 0.65, 0.58);
-  const quantumState = calculateQuantumMarketState(spotPrice, 38.5, 1.82, 120.0);
+  const viaNegativa = calculateViaNegativa(spotPrice, atr14, 60, 0, 0);
+  if (live?.band) {
+    const lower = Number(live.band.lower.toFixed(2));
+    const upper = Number(live.band.upper.toFixed(2));
+    viaNegativa.bLower = lower;
+    viaNegativa.bUpper = upper;
+    viaNegativa.deltaPMax = Number((Math.abs(upper - lower) / 2).toFixed(2));
+    viaNegativa.forbiddenProbability = Number((1 - params.quantile).toFixed(6));
+    viaNegativa.isForbidden = (price: number) => price > upper || price < lower;
+  }
+  const gravityField = calculateGravityField(
+    spotPrice,
+    live?.l2 ?? 0.5,
+    live?.iceberg ?? 0.5,
+    live?.poly ?? 0.5,
+    params,
+  );
+  const candle = live?.lastCandle;
+  const acSystem = candle
+    ? calculateACPowerMetrics(candle.open, candle.high, candle.low, candle.close, atr14 > 0 ? atr14 : 1)
+    : calculateACPowerMetrics(spotPrice, spotPrice, spotPrice, spotPrice, atr14 > 0 ? atr14 : 1, 0, 0);
+  const quantumState = calculateQuantumMarketState(spotPrice, atr14 > 0 ? atr14 : 42.5);
   const ecosystemLeaders = getEcosystemMetaRotation();
 
-  const tranches: PyramidingTranche[] = [
-    { id: 1, name: 'Tranche 1 (Scout)', sizeMultiplier: 1.0, entryPrice: Number((spotPrice - 380.5).toFixed(2)), atrOffset: 0, isFilled: true },
-    { id: 2, name: 'Tranche 2 (Pyramid A)', sizeMultiplier: 1.5, entryPrice: Number((spotPrice - 170.5).toFixed(2)), atrOffset: 0.5, isFilled: true },
-    { id: 3, name: 'Tranche 3 (Pyramid B)', sizeMultiplier: 2.0, entryPrice: Number((spotPrice + 39.5).toFixed(2)), atrOffset: 1.0, isFilled: false },
-  ];
+  const buys = (live?.fills ?? []).filter((fill) => fill.side === 'buy').slice(-3);
+  const tranches: PyramidingTranche[] = buys.length > 0
+    ? buys.map((fill, index) => ({
+        id: index + 1,
+        name: `Paper fill ${index + 1}`,
+        sizeMultiplier: 1,
+        entryPrice: Number(fill.price.toFixed(2)),
+        atrOffset: 0,
+        isFilled: true,
+      }))
+    : [{
+        id: 1,
+        name: 'Tranche 1 (Scout)',
+        sizeMultiplier: 1,
+        entryPrice: Number(spotPrice.toFixed(2)),
+        atrOffset: 0,
+        isFilled: false,
+      }];
 
+  const equity = live?.equityUSD ?? 0;
+  const pnl = live?.pnlUSD ?? 0;
   const basket: AntiMartingaleBasket = {
     symbol: 'BTC/USD',
     tranches,
-    totalVolume: 2.5,
-    averageEntryPrice: Number((spotPrice - 254.5).toFixed(2)),
+    totalVolume: live?.btcVolume ?? 0,
+    averageEntryPrice: Number((live?.avgEntry ?? spotPrice).toFixed(2)),
     currentMarketPrice: spotPrice,
-    trailingBasketStop: Number((spotPrice - 200.5).toFixed(2)), // Stop is ABOVE average entry -> 0.00 Risk
-    freeRollRiskUSD: 0.00,
-    unrealizedPnL: 636.25,
+    trailingBasketStop: Number((live?.avgEntry ?? spotPrice).toFixed(2)),
+    freeRollRiskUSD: 0,
+    unrealizedPnL: pnl,
     clusterExitTriggered: false,
   };
 
   const vault: DualStateVault = {
-    totalEquityUSD: 100000.0,
-    activeMarginAllocationUSD: 90000.0,
-    activeMarginPercent: 90.0,
-    dynamicLeverage: 8.5,
-    vaultAllocationUSD: 10000.0,
-    vaultPercent: 10.0,
+    totalEquityUSD: equity,
+    activeMarginAllocationUSD: Number((equity * 0.9).toFixed(2)),
+    activeMarginPercent: 90,
+    dynamicLeverage: 1,
+    vaultAllocationUSD: Number((equity * 0.1).toFixed(2)),
+    vaultPercent: 10,
     vaultState: 'STATE_A_AUTO_EARN',
-    vaultYieldAPY: 7.25,
-    unbondingLatencyMs: 24,
+    vaultYieldAPY: 0,
+    unbondingLatencyMs: 0,
   };
 
   return {

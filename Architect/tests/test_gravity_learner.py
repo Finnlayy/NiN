@@ -235,12 +235,29 @@ class ReplayTests(unittest.TestCase):
                 self.assertAlmostEqual(left, right, places=9)
             self.assertAlmostEqual(restored.quantile, online.quantile, places=9)
             self.assertEqual(restored.weight_updates, online.weight_updates)
+            self.assertEqual(len(restored._pending), len(online._pending))
 
             self.assertEqual(main(["--log", str(log_path), "--out", str(out_path), "--horizon-ticks", "4"]), 0)
             written = json.loads(out_path.read_text(encoding="utf-8"))
             self.assertEqual(len(written["weights"]), 3)
             self.assertAlmostEqual(sum(written["weights"]), 1.0, places=9)
+            self.assertIn("pending", written)
             self.assertEqual(main(["--log", str(Path(tmp) / "missing.ndjson"), "--out", str(out_path)]), 2)
+
+    def test_pending_round_trip_finishes_the_same_horizon(self):
+        learner = GravityFieldLearner(eta=0.05, horizon_ticks=2, gamma=0.01)
+        learner.observe(_tick(0.2, 0.3, 0.5, 100.0, False))
+        learner.observe(_tick(0.8, 0.1, 0.4, 101.0, False))
+        self.assertEqual(learner.weight_updates, 0)
+        blob = learner.to_json()
+        self.assertEqual(len(blob["pending"]), 2)
+        restored = GravityFieldLearner.from_json(blob)
+        third = _tick(0.4, 0.4, 0.4, 103.0, False)
+        restored.observe(third)
+        learner.observe(third)
+        self.assertEqual(restored.weight_updates, learner.weight_updates)
+        self.assertEqual(restored.weights, learner.weights)
+        self.assertAlmostEqual(restored.quantile, learner.quantile, places=9)
 
     def test_validator_accepts_enriched_ticks(self):
         payload = {

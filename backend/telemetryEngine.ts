@@ -120,7 +120,6 @@ class EngineTelemetryHub {
   private clockCounter: number = 100.0;
 
   constructor() {
-    this.seedInitialTicks();
     this.startLiveEngineProducer();
   }
 
@@ -128,12 +127,6 @@ class EngineTelemetryHub {
     const ms = BigInt(Date.now());
     const subMs = BigInt(Math.floor(Math.random() * 999999));
     return ((ms * 1000000n) + subMs).toString();
-  }
-
-  private seedInitialTicks() {
-    this.emitMicrostructureTick('BTC/USD', 0.42, 1420.5, [14, 8, -5, -12, 6, 22, 18, 9, -4, 11, 28, 15]);
-    this.emitGravityTick('BTC/USD', 0.78, 0.62, 0.49, 0.25 * 0.78 + 0.35 * 0.62 + 0.40 * 0.49);
-    this.emitRegimeTick('BTC/USD', 1, 0.94, 0);
   }
 
   public emitRecord(kind: TelemetryKind, symbol: string, payload: unknown): boolean {
@@ -181,12 +174,20 @@ class EngineTelemetryHub {
     });
   }
 
-  public emitGravityTick(symbol: string, l2: number, l3: number, poly: number, vTotal: number): boolean {
+  public emitGravityTick(
+    symbol: string,
+    l2: number,
+    l3: number,
+    poly: number,
+    vTotal: number,
+    extra?: Record<string, number>,
+  ): boolean {
     return this.emitRecord('gravity_tick', symbol, {
       l2_depth: l2,
       l3_iceberg: l3,
       polymarket_prob: poly,
       v_total: Number(vTotal.toFixed(4)),
+      ...extra,
     });
   }
 
@@ -199,28 +200,23 @@ class EngineTelemetryHub {
   }
 
   private startLiveEngineProducer() {
+    // Re-send the latest real ticks so SSE clients stay fresh. Numbers do
+    // not change until the gravity worker publishes a new candle.
     this.timer = setInterval(() => {
-      const symbols = ['BTC/USD', 'ETH/USD', 'SOL/USD'];
-      const sym = symbols[Math.floor(Math.random() * symbols.length)];
-
-      // 1. Microstructure tick
-      const imbalance = Number((Math.sin(Date.now() / 15000) * 0.6 + (Math.random() * 0.2 - 0.1)).toFixed(3));
-      const depth2pct = Number((1200 + Math.random() * 400).toFixed(1));
-      const footprint = Array.from({ length: 12 }, () => Math.floor(Math.random() * 60 - 25));
-      this.emitMicrostructureTick(sym, imbalance, depth2pct, footprint);
-
-      // 2. Gravity tick: 0.25 * l2 + 0.35 * l3 + 0.40 * poly
-      const l2 = Number((0.70 + Math.random() * 0.25).toFixed(3));
-      const l3 = Number((0.55 + Math.random() * 0.30).toFixed(3));
-      const poly = Number((0.45 + Math.random() * 0.20).toFixed(3));
-      const vTotal = 0.25 * l2 + 0.35 * l3 + 0.40 * poly;
-      this.emitGravityTick(sym, l2, l3, poly, vTotal);
-
-      // 3. Regime tick
-      const isForbidden = vTotal < 0.30 || vTotal > 0.95 ? 1 : 0;
-      const confidence = Number((0.85 + Math.random() * 0.12).toFixed(3));
-      this.emitRegimeTick(sym, 1, confidence, isForbidden);
-    }, 1200);
+      if (this.ring.length === 0 || this.listeners.size === 0) return;
+      const recent = this.ring.slice(-3);
+      this.lastTickTimestampMs = Date.now();
+      for (const record of recent) {
+        const stamped = { ...record, timestamp: new Date().toISOString() };
+        for (const listener of this.listeners) {
+          try {
+            listener(stamped);
+          } catch (err) {
+            console.error('[TelemetryHub] Listener exception:', err);
+          }
+        }
+      }
+    }, 3000);
   }
 
   public subscribe(listener: SseListener): () => void {
