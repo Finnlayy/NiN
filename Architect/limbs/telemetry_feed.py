@@ -81,10 +81,11 @@ def hour_labels(count: int = CVD_BINS, *, now: float | None = None) -> list[str]
 class TelemetryFeed:
     """Rechnet pro Tick die Engines und schickt drei geprüfte Events hinaus.
 
-    ``polymarket_prob`` ist **kein** Börsenwert: ohne Polymarket-Zulieferung ist
-    es eine explizit gesetzte Annahme (Default 0.5 = keine Information) und wird
-    als solche im Event mitgeführt (``assumptions``). Dasselbe gilt für die
-    Gewichtungen, die aus der Engine kommen (0.25/0.35/0.40).
+    ``polymarket_prob`` ist der dritte Feldwert. Ohne Zulieferung bleibt der
+    Payload-Platzhalter 0.5, das Event trägt ``polymarket_prob=static``, und
+    das Potential lässt das Gewicht weg. Ein berechneter Wert wird mit
+    ``polymarket_source="gamma"`` übergeben. Die Gewichtungen kommen
+    aus der Engine (0.25/0.35/0.40), solange kein Learner sie ersetzt.
     """
 
     #: Blueprint-Prior (0.25/0.35/0.40). Gerechnet wird mit
@@ -98,6 +99,7 @@ class TelemetryFeed:
         *,
         symbol: str = "BTCUSDT",
         polymarket_prob: float = 0.5,
+        polymarket_source: str = "static",
         bins: int = CVD_BINS,
         clock: Callable[[], float] = time.time,
         learner: Any | None = None,
@@ -107,6 +109,7 @@ class TelemetryFeed:
         self.sink = sink
         self.symbol = symbol
         self.polymarket_prob = polymarket_prob
+        self.polymarket_source = polymarket_source if polymarket_source in ("static", "gamma") else "static"
         self.bins = bins
         self.clock = clock
         self.micro = MicrostructureEngine()
@@ -142,9 +145,7 @@ class TelemetryFeed:
             )
             l2_depth = self._depth(bids, asks)
             l3_iceberg = self._iceberg(bids, asks)
-            v_total = self.gravity.compute_gravity_field(
-                l2_depth, l3_iceberg, self.polymarket_prob
-            )
+            v_total = self._field_value(l2_depth, l3_iceberg)
             history_ready = len(self._history) >= 2
             in_forbidden = self.gravity.is_in_forbidden_zone(price, self._history)
             tuned = self.gravity.params()
@@ -179,7 +180,7 @@ class TelemetryFeed:
             "gravity_tick",
             gravity_payload,
             clock_s=clock_s,
-            assumptions=("polymarket_prob=static",),
+            assumptions=(f"polymarket_prob={self.polymarket_source}",),
         )
         sent["regime_tick"] = self._send(
             "regime_tick",
@@ -201,19 +202,29 @@ class TelemetryFeed:
             self._history.append(float(price))
         return sent
 
+    def _field_value(self, l2_depth: float, l3_iceberg: float) -> float:
+        """Potential. A static placeholder is not a reading, so its weight is dropped."""
+        if self.polymarket_source == "gamma":
+            return float(self.gravity.compute_gravity_field(l2_depth, l3_iceberg, self.polymarket_prob))
+        w_vis, w_blind, _w_poly = self.gravity.weights
+        total = w_vis + w_blind
+        if total <= 0:
+            return 0.0
+        return (w_vis / total) * float(l2_depth) + (w_blind / total) * float(l3_iceberg)
+
     def _adapt(self, l2_depth: float, l3_iceberg: float, price: float, in_forbidden: bool | None) -> None:
         """One online step, then push the learned parameters back into the engine."""
         if self.learner is None:
             return
-        self.learner.observe(
-            {
-                "l2_depth": float(l2_depth),
-                "l3_iceberg": float(l3_iceberg),
-                "polymarket_prob": float(self.polymarket_prob),
-                "mid_price": float(price),
-                "is_forbidden_zone": in_forbidden,
-            }
-        )
+        tick = {
+            "l2_depth": float(l2_depth),
+            "l3_iceberg": float(l3_iceberg),
+            "mid_price": float(price),
+            "is_forbidden_zone": in_forbidden,
+        }
+        if self.polymarket_source == "gamma":
+            tick["polymarket_prob"] = float(self.polymarket_prob)
+        self.learner.observe(tick)
         tuned = self.learner.params()
         self.gravity.set_weights((tuned["w_vis"], tuned["w_blind"], tuned["w_poly"]))
         self.gravity.set_quantile(tuned["quantile"])

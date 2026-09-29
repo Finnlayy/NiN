@@ -327,6 +327,59 @@ class TelemetryFeedTests(unittest.TestCase):
             original = {key: gravity[-1][key] for key in ("l2_depth", "l3_iceberg", "polymarket_prob", "v_total")}
             ok, reason = validate_telemetry_payload("gravity_tick", original)
             self.assertTrue(ok, reason)
+            gravity_events = [event for event in events if event["event_kind"] == "gravity_tick"]
+            self.assertEqual(gravity_events[-1]["assumptions"], ["polymarket_prob=static"])
+
+    def test_gamma_source_is_named_on_the_event(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bus = EventBus(system_log_path=str(Path(tmp) / "system.log"))
+            bus.event_sinks["stderr"] = False
+
+            class Capture:
+                def __init__(self):
+                    self.events = []
+
+                def write(self, event):
+                    self.events.append(event)
+
+            sink = Capture()
+            feed = TelemetryFeed(bus, sink, polymarket_prob=0.4, polymarket_source="gamma")
+            self.assertTrue(feed.on_tape(*self._book(100.0))["gravity_tick"])
+            gravity = [event for event in sink.events if event["event_kind"] == "gravity_tick"]
+            self.assertEqual(gravity[-1]["assumptions"], ("polymarket_prob=gamma",))
+            self.assertAlmostEqual(gravity[-1]["payload"]["polymarket_prob"], 0.4)
+            static = TelemetryFeed(bus, sink, polymarket_source="nope")
+            self.assertEqual(static.polymarket_source, "static")
+
+    def test_static_potential_drops_the_placeholder(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bus = EventBus(system_log_path=str(Path(tmp) / "system.log"))
+            bus.event_sinks["stderr"] = False
+            feed = TelemetryFeed(bus, polymarket_prob=0.5, polymarket_source="static")
+            self.assertTrue(feed.on_tape(*self._book(100.0))["gravity_tick"])
+            text = Path(bus.system_log_path).read_text(encoding="utf-8")
+            events = [json.loads(line) for line in text.splitlines()]
+            payload = [event["payload"] for event in events if event["event_kind"] == "gravity_tick"][-1]
+            base = 0.25 + 0.35
+            expected = (0.25 / base) * payload["l2_depth"] + (0.35 / base) * payload["l3_iceberg"]
+            self.assertAlmostEqual(payload["v_total"], expected, places=5)
+            self.assertAlmostEqual(payload["polymarket_prob"], 0.5)
+
+    def test_missing_polymarket_does_not_train_that_feature(self):
+        bare = GravityFieldLearner(eta=0.5, horizon_ticks=1, min_updates=1)
+        trained = GravityFieldLearner(eta=0.5, horizon_ticks=1, min_updates=1)
+        zero = GravityFieldLearner(eta=0.5, horizon_ticks=1, min_updates=1)
+        for learner, poly in ((bare, None), (trained, 0.9), (zero, 0.0)):
+            first = {"l2_depth": 1.0, "l3_iceberg": 0.0, "mid_price": 100.0}
+            second = {"l2_depth": 1.0, "l3_iceberg": 0.0, "mid_price": 110.0}
+            if poly is not None:
+                first["polymarket_prob"] = poly
+                second["polymarket_prob"] = poly
+            self.assertTrue(learner.observe(first))
+            self.assertTrue(learner.observe(second))
+        self.assertEqual(bare.skipped, 0)
+        self.assertAlmostEqual(bare.params()["w_poly"], zero.params()["w_poly"])
+        self.assertNotAlmostEqual(bare.params()["w_poly"], trained.params()["w_poly"])
 
 
 if __name__ == "__main__":

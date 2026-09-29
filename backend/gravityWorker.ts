@@ -15,13 +15,16 @@ import {
   bookImbalance,
   computeForces,
   forbiddenBand,
+  gravityPotential,
   icebergRatio,
   isInForbiddenZone,
   l2Depth,
   type GravityParams,
 } from '../src/utils/gravityMath';
-import { GravityFieldLearner, type GravityLearnerJson } from '../src/utils/gravityLearner';
-import { setLiveOmegaSnapshot, type LiveFill, type LiveOmegaSnapshot } from '../src/utils/liveGravity';
+import { GravityFieldLearner, type GravityLearnerJson, type GravityTick } from '../src/utils/gravityLearner';
+import { intelEntersField, type IntelMix } from '../src/utils/intelMix';
+import { setLiveOmegaSnapshot, polyEntersField, type LiveFill, type LiveOmegaSnapshot, type PolySource } from '../src/utils/liveGravity';
+import { readIntel } from './intelAdapter';
 
 export const GRAVITY_WORKSPACE = 'nin-paper-gravity';
 const STATE_KEY = 'nin:gravity:learner';
@@ -36,6 +39,8 @@ interface StoredField {
   l2: number;
   iceberg: number;
   poly: number;
+  polySource: PolySource;
+  intel: IntelMix | null;
   params: GravityParams;
   atr14: number | null;
   candle: { open: number; high: number; low: number; close: number } | null;
@@ -100,7 +105,8 @@ async function saveStore(learner: GravityFieldLearner, lastCandleTime: number | 
 function publish(snapshot: LiveOmegaSnapshot, imbalance: number): void {
   setLiveOmegaSnapshot(snapshot);
   const symbol = 'BTC/USD';
-  engineTelemetryHub.emitGravityTick(symbol, snapshot.l2, snapshot.iceberg, snapshot.poly, snapshot.params.w_vis * snapshot.l2 + snapshot.params.w_blind * snapshot.iceberg + snapshot.params.w_poly * snapshot.poly, {
+  const includePoly = snapshot.intel ? intelEntersField(snapshot.intel) : polyEntersField(snapshot.polySource);
+  engineTelemetryHub.emitGravityTick(symbol, snapshot.l2, snapshot.iceberg, snapshot.poly, gravityPotential(snapshot.l2, snapshot.iceberg, snapshot.poly, snapshot.params, includePoly), {
     w_vis: snapshot.params.w_vis,
     w_blind: snapshot.params.w_blind,
     w_poly: snapshot.params.w_poly,
@@ -112,6 +118,18 @@ function publish(snapshot: LiveOmegaSnapshot, imbalance: number): void {
     ? [snapshot.lastCandle.close - snapshot.lastCandle.open]
     : [0];
   engineTelemetryHub.emitMicrostructureTick(symbol, imbalance - 0.5, snapshot.l2, footprint);
+}
+
+function sourceOf(field: { polySource?: unknown } | null | undefined): PolySource {
+  const value = field?.polySource;
+  if (value === 'gamma' || value === 'stale' || value === 'neutral') return value;
+  return 'neutral';
+}
+
+function sourceOfMix(mix: IntelMix): PolySource {
+  if (!intelEntersField(mix)) return 'neutral';
+  if (mix.contributions.length > 0 && mix.contributions.every((item) => item.status === 'stale')) return 'stale';
+  return 'gamma';
 }
 
 function snapshotFrom(
@@ -137,7 +155,8 @@ function snapshotFrom(
     btcVolume,
     avgEntry,
     fills,
-    polySource: 'neutral',
+    polySource: sourceOf(field),
+    intel: field.intel ?? null,
   };
 }
 
@@ -165,12 +184,16 @@ export async function readGravityState(executor: KrakenOrderExecutor): Promise<R
     side: fill.side,
   }));
   const btc = await executor.paperAssetBalance(GRAVITY_WORKSPACE, 'BTC');
+  const spot = stored?.field && stored.field.mid > 0 ? stored.field.mid : null;
+  const intel = spot != null ? await readIntel(spot) : stored?.field?.intel ?? null;
+  const polySource = intel ? sourceOfMix(intel) : sourceOf(stored?.field);
+  const poly = intel && intelEntersField(intel) && intel.value != null ? intel.value : stored?.field?.poly;
   return {
     ready: Boolean(stored?.field),
     updatedAt: stored?.updatedAt ?? null,
     executionMode: executionMode(),
     workspace: GRAVITY_WORKSPACE,
-    field: stored?.field ?? null,
+    field: stored?.field ? { ...stored.field, poly: poly ?? stored.field.poly, polySource, intel } : null,
     learner: stored?.learner
       ? {
           w_vis: stored.learner.weights[0],
@@ -185,7 +208,8 @@ export async function readGravityState(executor: KrakenOrderExecutor): Promise<R
     fills: liveFills,
     btcVolume: btc,
     avgEntry: weightedEntry(liveFills),
-    polySource: 'neutral',
+    polySource,
+    intel,
   };
 }
 
@@ -206,7 +230,10 @@ export async function runGravityWorker(executor: KrakenOrderExecutor): Promise<R
 
   const l2 = book ? l2Depth(book.bids, book.asks, mid) : 0.5;
   const iceberg = book ? icebergRatio(book.bids, book.asks) : 0.5;
-  const poly = 0.5;
+  const intel = await readIntel(mid);
+  const includePoly = intelEntersField(intel);
+  const poly = includePoly && intel.value != null ? intel.value : 0.5;
+  const polySource = sourceOfMix(intel);
   const imbalance = book ? bookImbalance(book.bids, book.asks, mid) : 0.5;
   const closes = candles.map((candle) => candle.close);
   const learnedBefore = learner.params();
@@ -215,13 +242,14 @@ export async function runGravityWorker(executor: KrakenOrderExecutor): Promise<R
 
   let observed = false;
   if (last.time !== lastCandleTime) {
-    observed = learner.observe({
+    const tick: GravityTick = {
       l2_depth: l2,
       l3_iceberg: iceberg,
-      polymarket_prob: poly,
       mid_price: last.close,
       is_forbidden_zone: historyReady ? forbidden : undefined,
-    });
+    };
+    if (includePoly) tick.polymarket_prob = poly;
+    observed = learner.observe(tick);
   }
 
   const learned = learner.params();
@@ -233,7 +261,7 @@ export async function runGravityWorker(executor: KrakenOrderExecutor): Promise<R
     history_window: HISTORY_WINDOW,
   };
   const band = historyReady ? forbiddenBand(closes, params.quantile, HISTORY_WINDOW) : null;
-  const forces = computeForces(mid, mid, l2, iceberg, poly, params);
+  const forces = computeForces(mid, mid, l2, iceberg, poly, params, includePoly);
   const atr = atr14(candles);
 
   const field: StoredField = {
@@ -241,6 +269,8 @@ export async function runGravityWorker(executor: KrakenOrderExecutor): Promise<R
     l2,
     iceberg,
     poly,
+    polySource,
+    intel,
     params,
     atr14: atr,
     candle: { open: last.open, high: last.high, low: last.low, close: last.close },
@@ -298,7 +328,9 @@ export async function runGravityWorker(executor: KrakenOrderExecutor): Promise<R
     l2,
     iceberg,
     poly,
-    polySource: 'neutral',
+    polySource,
+    intel,
+    gateOpen: false,
     forbidden,
     forceNet: Number(forces.fNet.toFixed(4)),
     vTotal: Number(forces.vTotal.toFixed(6)),

@@ -1,0 +1,49 @@
+{
+  "cases": [
+    {
+      "name": "two primaries",
+      "sources": [
+        { "id": "a", "label": "A", "weight": 1, "enabled": true, "fallback": false, "value": 0.4, "status": "live" },
+        { "id": "b", "label": "B", "weight": 3, "enabled": true, "fallback": false, "value": 0.8, "status": "live" }
+      ],
+      "value": 0.7,
+      "ids": ["a", "b"]
+    },
+    {
+      "name": "fallback only when primary is dark",
+      "sources": [
+        { "id": "a", "label": "A", "weight": 1, "enabled": true, "fallback": false, "value": null, "status": "off" },
+        { "id": "c", "label": "C", "weight": 1, "enabled": true, "fallback": true, "value": 0.25, "status": "live" }
+      ],
+      "value": 0.25,
+      "ids": ["c"]
+    },
+    {
+      "name": "live primary hides an enabled fallback",
+      "sources": [
+        { "id": "a", "label": "A", "weight": 1, "enabled": true, "fallback": false, "value": 0.4, "status": "live" },
+        { "id": "c", "label": "C", "weight": 5, "enabled": true, "fallback": true, "value": 0.9, "status": "live" }
+      ],
+      "value": 0.4,
+      "ids": ["a"]
+    },
+    {
+      "name": "disabled fallback stays out",
+      "sources": [
+        { "id": "a", "label": "A", "weight": 1, "enabled": true, "fallback": false, "value": null, "status": "off" },
+        { "id": "c", "label": "C", "weight": 1, "enabled": false, "fallback": true, "value": 0.25, "status": "live" }
+      ],
+      "value": null,
+      "ids": []
+    },
+    {
+      "name": "disabled primary is ignored",
+      "sources": [
+        { "id": "a", "label": "A", "weight": 1, "enabled": false, "fallback": false, "value": 0.1, "status": "live" },
+        { "id": "b", "label": "B", "weight": 1, "enabled": true, "fallback": false, "value": 0.8, "status": "stale" }
+      ],
+      "value": 0.8,
+      "ids": ["b"]
+    }
+  ]
+}

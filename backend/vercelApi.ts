@@ -4,6 +4,8 @@ import { botRegistry } from './bots';
 import { runAutoDcaWorker, getDcaDipStatus } from './autoDcaWorker';
 import { handlePricesRequest } from './prices';
 import { handleCandlesApi } from './candles';
+import { handlePolymarketApi } from './polymarket';
+import { handleIntelApi } from './intelAdapter';
 import { handleGravityApi } from './gravityWorker';
 import type { KrakenOrderExecutor } from './kraken';
 
@@ -177,6 +179,14 @@ export async function handleVercelApi(req: IncomingMessage, res: ServerResponse,
   }
 
   if (await handleCandlesApi(req, res)) {
+    return true;
+  }
+
+  if (await handlePolymarketApi(req, res)) {
+    return true;
+  }
+
+  if (await handleIntelApi(req, res)) {
     return true;
   }
 
