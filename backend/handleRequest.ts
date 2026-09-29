@@ -20,7 +20,7 @@ import { kernelEngine } from './kernel';
 import { engineTelemetryHub } from './telemetryEngine';
 import { botRegistry } from './bots';
 import { handlePricesRequest } from './prices';
-import { fetchGitHubUser } from './connect';
+import { fetchGitHubUser, rememberOidcHeader } from './connect';
 
 const krakenExecutor = new KrakenOrderExecutor();
 
@@ -172,6 +172,7 @@ export async function handleRequest(req: IncomingMessage, res: ServerResponse): 
     }
 
     if (method === 'GET' && url === '/api/connect/github') {
+      rememberOidcHeader(req.headers['x-vercel-oidc-token']);
       const result = await fetchGitHubUser(process.env.CONNECT_GITHUB);
       if (!result.ok) {
         sendJson(res, result.status, {

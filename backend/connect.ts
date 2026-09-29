@@ -33,6 +33,16 @@ export type GitHubConnectResult =
   | { ok: true; status: number; login?: string; id?: number; repositories: number }
   | { ok: false; status: number; missing?: string; error: string };
 
+/**
+ * Vercel puts the project OIDC token on the request, not in the environment.
+ * Copy it once so @vercel/connect can read it. Never log the value.
+ */
+export function rememberOidcHeader(header: string | string[] | undefined): void {
+  if (process.env.VERCEL_OIDC_TOKEN) return;
+  const value = Array.isArray(header) ? header[0] : header;
+  if (value) process.env.VERCEL_OIDC_TOKEN = value;
+}
+
 /** Call GitHub as the Connect app installation. A missing connector uid is a 503, not a guessed token. */
 export async function fetchGitHubUser(connectorUid: string | undefined): Promise<GitHubConnectResult> {
   const connector = connectorUid?.trim();
@@ -42,15 +52,6 @@ export async function fetchGitHubUser(connectorUid: string | undefined): Promise
       status: 503,
       missing: 'CONNECT_GITHUB',
       error: 'CONNECT_GITHUB is not set',
-    };
-  }
-
-  if (!process.env.VERCEL_OIDC_TOKEN) {
-    return {
-      ok: false,
-      status: 503,
-      missing: 'VERCEL_OIDC_TOKEN',
-      error: 'VERCEL_OIDC_TOKEN is not set. Run vercel link and vercel env pull.',
     };
   }
 
@@ -88,10 +89,13 @@ export async function fetchGitHubUser(connectorUid: string | undefined): Promise
       repositories: body.total_count ?? body.repositories?.length ?? 0,
     };
   } catch (error) {
+    const message = error instanceof Error ? error.message : 'GitHub Connect request failed';
+    const missingOidc = message.includes('x-vercel-oidc-token') || message.includes('OIDC');
     return {
       ok: false,
-      status: 502,
-      error: error instanceof Error ? error.message : 'GitHub Connect request failed',
+      status: missingOidc ? 503 : 502,
+      ...(missingOidc ? { missing: 'VERCEL_OIDC_TOKEN' as const } : {}),
+      error: message,
     };
   }
 }
