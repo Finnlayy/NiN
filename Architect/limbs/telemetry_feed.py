@@ -81,10 +81,10 @@ def hour_labels(count: int = CVD_BINS, *, now: float | None = None) -> list[str]
 class TelemetryFeed:
     """Rechnet pro Tick die Engines und schickt drei geprüfte Events hinaus.
 
-    ``polymarket_prob`` ist **kein** Börsenwert: ohne Polymarket-Zulieferung ist
-    es eine explizit gesetzte Annahme (Default 0.5 = keine Information) und wird
-    als solche im Event mitgeführt (``assumptions``). Dasselbe gilt für die
-    Gewichtungen, die aus der Engine kommen (0.25/0.35/0.40).
+    ``polymarket_prob`` ist der dritte Feldwert. Ohne Zulieferung bleibt er
+    0.5 und das Event trägt ``polymarket_prob=static``. Ein berechneter Wert
+    wird mit ``polymarket_source="gamma"`` übergeben. Die Gewichtungen kommen
+    aus der Engine (0.25/0.35/0.40), solange kein Learner sie ersetzt.
     """
 
     #: Blueprint-Prior (0.25/0.35/0.40). Gerechnet wird mit
@@ -98,6 +98,7 @@ class TelemetryFeed:
         *,
         symbol: str = "BTCUSDT",
         polymarket_prob: float = 0.5,
+        polymarket_source: str = "static",
         bins: int = CVD_BINS,
         clock: Callable[[], float] = time.time,
         learner: Any | None = None,
@@ -107,6 +108,7 @@ class TelemetryFeed:
         self.sink = sink
         self.symbol = symbol
         self.polymarket_prob = polymarket_prob
+        self.polymarket_source = polymarket_source if polymarket_source in ("static", "gamma") else "static"
         self.bins = bins
         self.clock = clock
         self.micro = MicrostructureEngine()
@@ -179,7 +181,7 @@ class TelemetryFeed:
             "gravity_tick",
             gravity_payload,
             clock_s=clock_s,
-            assumptions=("polymarket_prob=static",),
+            assumptions=(f"polymarket_prob={self.polymarket_source}",),
         )
         sent["regime_tick"] = self._send(
             "regime_tick",

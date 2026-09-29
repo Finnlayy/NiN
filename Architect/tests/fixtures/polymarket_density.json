@@ -1,0 +1,33 @@
+{
+  "spot": 83891,
+  "ladder": [
+    { "strike": 80000, "yes": 0.8 },
+    { "strike": 85000, "yes": 0.4 },
+    { "strike": 90000, "yes": 0.1 }
+  ],
+  "masses": [0.2, 0.4, 0.3, 0.1],
+  "poly": 0.4,
+  "rising": [
+    { "strike": 80000, "yes": 0.2 },
+    { "strike": 85000, "yes": 0.5 },
+    { "strike": 90000, "yes": 0.9 }
+  ],
+  "short": [
+    { "strike": 80000, "yes": 0.8 },
+    { "strike": 90000, "yes": 0.2 }
+  ],
+  "gamma": [
+    {
+      "slug": "btc-above-fixture",
+      "title": "Bitcoin above",
+      "volume24hr": 10,
+      "liquidity": 20,
+      "markets": [
+        { "groupItemTitle": "80000", "outcomePrices": "[\"0.80\", \"0.20\"]", "volume": "100" },
+        { "groupItemTitle": "85,000", "outcomePrices": ["0.40", "0.60"], "volume": 80 },
+        { "groupItemTitle": "$90,000", "outcomePrices": "[\"0.10\", \"0.90\"]" },
+        { "groupItemTitle": "not-a-strike", "outcomePrices": "[\"0.50\", \"0.50\"]" }
+      ]
+    }
+  ]
+}

@@ -327,6 +327,29 @@ class TelemetryFeedTests(unittest.TestCase):
             original = {key: gravity[-1][key] for key in ("l2_depth", "l3_iceberg", "polymarket_prob", "v_total")}
             ok, reason = validate_telemetry_payload("gravity_tick", original)
             self.assertTrue(ok, reason)
+            gravity_events = [event for event in events if event["event_kind"] == "gravity_tick"]
+            self.assertEqual(gravity_events[-1]["assumptions"], ["polymarket_prob=static"])
+
+    def test_gamma_source_is_named_on_the_event(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bus = EventBus(system_log_path=str(Path(tmp) / "system.log"))
+            bus.event_sinks["stderr"] = False
+
+            class Capture:
+                def __init__(self):
+                    self.events = []
+
+                def write(self, event):
+                    self.events.append(event)
+
+            sink = Capture()
+            feed = TelemetryFeed(bus, sink, polymarket_prob=0.4, polymarket_source="gamma")
+            self.assertTrue(feed.on_tape(*self._book(100.0))["gravity_tick"])
+            gravity = [event for event in sink.events if event["event_kind"] == "gravity_tick"]
+            self.assertEqual(gravity[-1]["assumptions"], ("polymarket_prob=gamma",))
+            self.assertAlmostEqual(gravity[-1]["payload"]["polymarket_prob"], 0.4)
+            static = TelemetryFeed(bus, sink, polymarket_source="nope")
+            self.assertEqual(static.polymarket_source, "static")
 
 
 if __name__ == "__main__":

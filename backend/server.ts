@@ -22,6 +22,7 @@ import { engineTelemetryHub } from './telemetryEngine';
 import { botRegistry } from './bots';
 import { handlePricesRequest } from './prices';
 import { handleCandlesApi } from './candles';
+import { handlePolymarketApi } from './polymarket';
 import { handleGravityApi } from './gravityWorker';
 
 const krakenExecutor = new KrakenOrderExecutor();
@@ -404,6 +405,10 @@ async function startServer() {
       }
 
       if (await handleCandlesApi(req, res)) {
+        return;
+      }
+
+      if (await handlePolymarketApi(req, res)) {
         return;
       }
 

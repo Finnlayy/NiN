@@ -20,7 +20,7 @@ import {
 } from '../utils/omegaLogic';
 import { getLiveSpot } from '../utils/liveSpot';
 import { DEFAULT_GRAVITY_PARAMS, type GravityParams } from '../utils/gravityMath';
-import { ensureLiveGravityPoller, getLiveOmegaSnapshot, subscribeLiveGravity } from '../utils/liveGravity';
+import { ensureLiveGravityPoller, getLiveOmegaSnapshot, polyConsensusText, subscribeLiveGravity, type PolySource } from '../utils/liveGravity';
 
 interface GravitationTelemetryGraphProps {
   gravityField?: GravityFieldState;
@@ -60,6 +60,7 @@ export default function GravitationTelemetryGraph({
   const [l2Depth, setL2Depth] = useState(0.5);
   const [icebergDepth, setIcebergDepth] = useState(0.5);
   const [polyProb, setPolyProb] = useState(0.5);
+  const [polySource, setPolySource] = useState<PolySource>('neutral');
   const [gravityParams, setGravityParams] = useState<GravityParams>(DEFAULT_GRAVITY_PARAMS);
   const [currentSpot, setCurrentSpot] = useState(spotPrice);
 
@@ -103,6 +104,7 @@ export default function GravitationTelemetryGraph({
       setL2Depth(snap.l2);
       setIcebergDepth(snap.iceberg);
       setPolyProb(snap.poly);
+      setPolySource(snap.polySource);
       if (snap.spotPrice > 0) setCurrentSpot(snap.spotPrice);
       setGravityParams(snap.params);
       if (!streamingRef.current) return;
@@ -231,6 +233,7 @@ export default function GravitationTelemetryGraph({
     setL2Depth(live?.l2 ?? 0.5);
     setIcebergDepth(live?.iceberg ?? 0.5);
     setPolyProb(live?.poly ?? 0.5);
+    setPolySource(live?.polySource ?? 'neutral');
     setGravityParams(live?.params ?? DEFAULT_GRAVITY_PARAMS);
     setCurrentSpot(live?.spotPrice ?? spotPrice);
     if (onLogEvent) {
@@ -431,7 +434,7 @@ export default function GravitationTelemetryGraph({
             </div>
           </div>
           <div className="flex items-center justify-between text-[10px] font-mono text-slate-400 mt-2 pt-2 border-t border-slate-800">
-            <span>Konsensus: <strong className="text-slate-200">{(polyProb * 100).toFixed(0)}% Up</strong></span>
+            <span>Konsensus: <strong className="text-slate-200">{polyConsensusText(polyProb, polySource)}</strong>{polyProb >= 0.6 ? <span className="ml-1 text-amber-300">0.60</span> : null}</span>
             <span className="flex items-center gap-1 text-amber-400/80">
               {showPoly ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3 text-slate-500" />}
               {showPoly ? 'Sichtbar' : 'Ausgeblendet'}

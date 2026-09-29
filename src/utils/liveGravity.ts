@@ -7,6 +7,30 @@
 import type { GravityParams } from './gravityMath';
 import { DEFAULT_GRAVITY_PARAMS } from './gravityMath';
 
+export type PolySource = 'gamma' | 'stale' | 'neutral';
+
+export function readPolySource(value: unknown): PolySource {
+  if (value === 'gamma' || value === 'stale' || value === 'neutral') return value;
+  return 'neutral';
+}
+
+/** Neutral stays a plain percent. Gamma and stale name their source. */
+export function polyConsensusText(prob: number, source: PolySource): string {
+  const pct = `${(prob * 100).toFixed(0)}% Up`;
+  switch (source) {
+    case 'neutral':
+      return pct;
+    case 'gamma':
+      return `${pct} · Gamma`;
+    case 'stale':
+      return `${pct} · stale`;
+    default: {
+      const unexpected: never = source;
+      return unexpected;
+    }
+  }
+}
+
 export interface LiveFill {
   price: number;
   volume: number;
@@ -29,8 +53,8 @@ export interface LiveOmegaSnapshot {
   btcVolume: number | null;
   avgEntry: number | null;
   fills: LiveFill[];
-  /** Polymarket is not wired; 0.5 means no information. */
-  polySource: 'neutral';
+  /** neutral is 0.5 with no ladder. gamma is a fresh density. stale is the last good ladder. */
+  polySource: PolySource;
 }
 
 const listeners = new Set<(snapshot: LiveOmegaSnapshot) => void>();
@@ -107,7 +131,7 @@ export function parseGravityState(payload: unknown): LiveOmegaSnapshot | null {
     btcVolume: isFiniteNumber(body.btcVolume) ? body.btcVolume : null,
     avgEntry: isFiniteNumber(body.avgEntry) ? body.avgEntry : null,
     fills,
-    polySource: 'neutral',
+    polySource: readPolySource(row?.polySource ?? body.polySource),
   };
 }
 

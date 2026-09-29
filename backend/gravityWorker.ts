@@ -21,7 +21,8 @@ import {
   type GravityParams,
 } from '../src/utils/gravityMath';
 import { GravityFieldLearner, type GravityLearnerJson } from '../src/utils/gravityLearner';
-import { setLiveOmegaSnapshot, type LiveFill, type LiveOmegaSnapshot } from '../src/utils/liveGravity';
+import { setLiveOmegaSnapshot, type LiveFill, type LiveOmegaSnapshot, type PolySource } from '../src/utils/liveGravity';
+import { readPolymarket } from './polymarket';
 
 export const GRAVITY_WORKSPACE = 'nin-paper-gravity';
 const STATE_KEY = 'nin:gravity:learner';
@@ -36,6 +37,7 @@ interface StoredField {
   l2: number;
   iceberg: number;
   poly: number;
+  polySource: PolySource;
   params: GravityParams;
   atr14: number | null;
   candle: { open: number; high: number; low: number; close: number } | null;
@@ -114,6 +116,12 @@ function publish(snapshot: LiveOmegaSnapshot, imbalance: number): void {
   engineTelemetryHub.emitMicrostructureTick(symbol, imbalance - 0.5, snapshot.l2, footprint);
 }
 
+function sourceOf(field: { polySource?: unknown } | null | undefined): PolySource {
+  const value = field?.polySource;
+  if (value === 'gamma' || value === 'stale' || value === 'neutral') return value;
+  return 'neutral';
+}
+
 function snapshotFrom(
   field: StoredField,
   paper: { currentValue: number | null; unrealizedPnl: number | null } | null,
@@ -137,7 +145,7 @@ function snapshotFrom(
     btcVolume,
     avgEntry,
     fills,
-    polySource: 'neutral',
+    polySource: sourceOf(field),
   };
 }
 
@@ -170,7 +178,7 @@ export async function readGravityState(executor: KrakenOrderExecutor): Promise<R
     updatedAt: stored?.updatedAt ?? null,
     executionMode: executionMode(),
     workspace: GRAVITY_WORKSPACE,
-    field: stored?.field ?? null,
+    field: stored?.field ? { ...stored.field, polySource: sourceOf(stored.field) } : null,
     learner: stored?.learner
       ? {
           w_vis: stored.learner.weights[0],
@@ -185,7 +193,7 @@ export async function readGravityState(executor: KrakenOrderExecutor): Promise<R
     fills: liveFills,
     btcVolume: btc,
     avgEntry: weightedEntry(liveFills),
-    polySource: 'neutral',
+    polySource: sourceOf(stored?.field),
   };
 }
 
@@ -206,7 +214,9 @@ export async function runGravityWorker(executor: KrakenOrderExecutor): Promise<R
 
   const l2 = book ? l2Depth(book.bids, book.asks, mid) : 0.5;
   const iceberg = book ? icebergRatio(book.bids, book.asks) : 0.5;
-  const poly = 0.5;
+  const polySnap = await readPolymarket(mid);
+  const poly = polySnap.poly;
+  const polySource = polySnap.polySource;
   const imbalance = book ? bookImbalance(book.bids, book.asks, mid) : 0.5;
   const closes = candles.map((candle) => candle.close);
   const learnedBefore = learner.params();
@@ -241,6 +251,7 @@ export async function runGravityWorker(executor: KrakenOrderExecutor): Promise<R
     l2,
     iceberg,
     poly,
+    polySource,
     params,
     atr14: atr,
     candle: { open: last.open, high: last.high, low: last.low, close: last.close },
@@ -298,7 +309,8 @@ export async function runGravityWorker(executor: KrakenOrderExecutor): Promise<R
     l2,
     iceberg,
     poly,
-    polySource: 'neutral',
+    polySource,
+    gateOpen: polySnap.gateOpen,
     forbidden,
     forceNet: Number(forces.fNet.toFixed(4)),
     vTotal: Number(forces.vTotal.toFixed(6)),
