@@ -6,6 +6,7 @@
 
 import type { GravityParams } from './gravityMath';
 import { DEFAULT_GRAVITY_PARAMS } from './gravityMath';
+import { intelEntersField, type IntelMix } from './intelMix';
 
 export type PolySource = 'gamma' | 'stale' | 'neutral';
 
@@ -14,12 +15,27 @@ export function readPolySource(value: unknown): PolySource {
   return 'neutral';
 }
 
-/** Neutral stays a plain percent. Gamma and stale name their source. */
+/** A fresh or still-fresh ladder is a real input. Neutral is not in the field. */
+export function polyEntersField(source: PolySource): boolean {
+  switch (source) {
+    case 'gamma':
+    case 'stale':
+      return true;
+    case 'neutral':
+      return false;
+    default: {
+      const unexpected: never = source;
+      return unexpected;
+    }
+  }
+}
+
+/** Neutral names the missing feed. Gamma and stale show the live percent. */
 export function polyConsensusText(prob: number, source: PolySource): string {
   const pct = `${(prob * 100).toFixed(0)}% Up`;
   switch (source) {
     case 'neutral':
-      return pct;
+      return 'ausgeschlossen';
     case 'gamma':
       return `${pct} · Gamma`;
     case 'stale':
@@ -53,8 +69,10 @@ export interface LiveOmegaSnapshot {
   btcVolume: number | null;
   avgEntry: number | null;
   fills: LiveFill[];
-  /** neutral is 0.5 with no ladder. gamma is a fresh density. stale is the last good ladder. */
+  /** neutral means the third component is out of the field. gamma is a live mix. stale is the last good mix. */
   polySource: PolySource;
+  /** Per-source blend. Null on snapshots written before the adapter. */
+  intel: IntelMix | null;
 }
 
 const listeners = new Set<(snapshot: LiveOmegaSnapshot) => void>();
@@ -132,7 +150,56 @@ export function parseGravityState(payload: unknown): LiveOmegaSnapshot | null {
     avgEntry: isFiniteNumber(body.avgEntry) ? body.avgEntry : null,
     fills,
     polySource: readPolySource(row?.polySource ?? body.polySource),
+    intel: readIntelMix(row?.intel ?? body.intel),
   };
+}
+
+function readIntelMix(value: unknown): IntelMix | null {
+  if (!value || typeof value !== 'object') return null;
+  const row = value as Record<string, unknown>;
+  const sources: IntelMix['sources'] = [];
+  if (Array.isArray(row.sources)) {
+    for (const item of row.sources) {
+      if (!item || typeof item !== 'object') continue;
+      const source = item as Record<string, unknown>;
+      if (typeof source.id !== 'string' || typeof source.label !== 'string') continue;
+      const status = source.status === 'live' || source.status === 'stale' || source.status === 'off' ? source.status : 'off';
+      sources.push({
+        id: source.id,
+        label: source.label,
+        weight: isFiniteNumber(source.weight) ? source.weight : 0,
+        enabled: source.enabled === true,
+        fallback: source.fallback === true,
+        value: isFiniteNumber(source.value) ? source.value : null,
+        status,
+      });
+    }
+  }
+  const contributions: IntelMix['contributions'] = [];
+  if (Array.isArray(row.contributions)) {
+    for (const item of row.contributions) {
+      if (!item || typeof item !== 'object') continue;
+      const entry = item as Record<string, unknown>;
+      if (typeof entry.id !== 'string' || typeof entry.label !== 'string') continue;
+      if (!isFiniteNumber(entry.value) || !isFiniteNumber(entry.weight)) continue;
+      if (entry.status !== 'live' && entry.status !== 'stale') continue;
+      contributions.push({
+        id: entry.id,
+        label: entry.label,
+        value: entry.value,
+        weight: entry.weight,
+        fallback: entry.fallback === true,
+        status: entry.status,
+      });
+    }
+  }
+  const mix: IntelMix = {
+    value: isFiniteNumber(row.value) ? row.value : null,
+    contributions,
+    sources,
+  };
+  if (!intelEntersField(mix) && sources.length === 0 && contributions.length === 0) return null;
+  return mix;
 }
 
 export function getLiveOmegaSnapshot(): LiveOmegaSnapshot | null {

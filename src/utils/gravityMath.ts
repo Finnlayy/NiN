@@ -154,12 +154,36 @@ export function normalizeParams(params: GravityParams): GravityParams {
   };
 }
 
+/**
+ * Simplex used by one evaluation. A dark third component drops that
+ * weight and the visible book and iceberg share the rest.
+ */
+export function fieldWeights(
+  params: Pick<GravityParams, 'w_vis' | 'w_blind' | 'w_poly'>,
+  includePoly: boolean,
+): { w_vis: number; w_blind: number; w_poly: number } {
+  const wPoly = includePoly ? params.w_poly : 0;
+  const total = params.w_vis + params.w_blind + wPoly;
+  const scale = total > 0 ? total : 1;
+  return {
+    w_vis: params.w_vis / scale,
+    w_blind: params.w_blind / scale,
+    w_poly: wPoly / scale,
+  };
+}
+
 /** Weighted potential. Inputs may be raw depths or unit features. */
-export function gravityPotential(l2: number, iceberg: number, poly: number, params: GravityParams): number {
-  const w = normalizeParams(params);
+export function gravityPotential(
+  l2: number,
+  iceberg: number,
+  poly: number,
+  params: GravityParams,
+  includePoly = true,
+): number {
+  const w = fieldWeights(normalizeParams(params), includePoly);
   const vVis = asUnit(l2, VIS_FULL);
   const vBlind = asUnit(iceberg, BLIND_FULL);
-  const vPoly = asUnit(poly, 1);
+  const vPoly = includePoly ? asUnit(poly, 1) : 0;
   return w.w_vis * vVis + w.w_blind * vBlind + w.w_poly * vPoly;
 }
 
@@ -170,17 +194,18 @@ export function computeForces(
   iceberg: number,
   poly: number,
   params: GravityParams,
+  includePoly = true,
 ): GravityForces {
-  const w = normalizeParams(params);
+  const w = fieldWeights(normalizeParams(params), includePoly);
   const vVis = asUnit(l2, VIS_FULL);
   const vBlind = asUnit(iceberg, BLIND_FULL);
-  const vPoly = asUnit(poly, 1);
+  const vPoly = includePoly ? asUnit(poly, 1) : 0;
   const pStarVis = spot + attractorShift('vis', l2);
   const pStarBlind = spot + attractorShift('blind', iceberg);
-  const pStarPoly = spot + attractorShift('poly', poly);
+  const pStarPoly = includePoly ? spot + attractorShift('poly', poly) : spot;
   const fVis = -K_VIS * (price - pStarVis);
   const fBlind = -K_BLIND * (price - pStarBlind);
-  const fPoly = -K_POLY * (price - pStarPoly);
+  const fPoly = includePoly ? -K_POLY * (price - pStarPoly) : 0;
   const fNet = w.w_vis * fVis + w.w_blind * fBlind + w.w_poly * fPoly;
   return {
     pStarVis,

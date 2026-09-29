@@ -23,6 +23,7 @@ import { botRegistry } from './bots';
 import { handlePricesRequest } from './prices';
 import { handleCandlesApi } from './candles';
 import { handlePolymarketApi } from './polymarket';
+import { handleIntelApi } from './intelAdapter';
 import { handleGravityApi } from './gravityWorker';
 
 const krakenExecutor = new KrakenOrderExecutor();
@@ -409,6 +410,10 @@ async function startServer() {
       }
 
       if (await handlePolymarketApi(req, res)) {
+        return;
+      }
+
+      if (await handleIntelApi(req, res)) {
         return;
       }
 

@@ -145,12 +145,10 @@ class GravityFieldLearner:
         skipped) or its components are not finite.
         """
         mid = _as_finite(tick.get("mid_price"))
-        components = (
-            _as_finite(tick.get("l2_depth")),
-            _as_finite(tick.get("l3_iceberg")),
-            _as_finite(tick.get("polymarket_prob")),
-        )
-        if mid is None or any(c is None for c in components):
+        l2 = _as_finite(tick.get("l2_depth"))
+        iceberg = _as_finite(tick.get("l3_iceberg"))
+        poly = _as_finite(tick.get("polymarket_prob"))
+        if mid is None or l2 is None or iceberg is None:
             self.skipped += 1
             return False
 
@@ -158,7 +156,10 @@ class GravityFieldLearner:
         if breach is not None:
             self._update_quantile(breach)
 
-        self._pending.append({"x": components, "mid": mid})
+        row = {"x": (l2, iceberg, 0.0 if poly is None else poly), "mid": mid}
+        if poly is None:
+            row["observed"] = (True, True, False)
+        self._pending.append(row)
         self._resolve()
         return True
 
@@ -179,21 +180,34 @@ class GravityFieldLearner:
             if move == 0.0 or self.eta == 0.0:
                 continue
             label = 1.0 if move > 0.0 else -1.0
-            self._record_hit(past["x"], label)
-            self._update_weights(past["x"], label)
+            observed = past.get("observed") or (True, True, True)
+            self._record_hit(past["x"], label, observed)
+            self._update_weights(past["x"], label, observed)
 
-    def _record_hit(self, components: tuple[float, float, float], label: float) -> None:
-        mean = sum(components) / 3.0
-        score = sum(w * (x - mean) for w, x in zip(self.weights, components))
+    def _record_hit(self, components: tuple[float, float, float], label: float, observed: tuple[bool, bool, bool]) -> None:
+        active = [(w, x) for w, x, seen in zip(self.weights, components, observed) if seen]
+        if not active:
+            return
+        mean = sum(x for _w, x in active) / len(active)
+        score = sum(w * (x - mean) for w, x in active)
         if score == 0.0:
             return
         self.directional += 1
         if score * label > 0.0:
             self.hits += 1
 
-    def _update_weights(self, components: tuple[float, float, float], label: float) -> None:
+    def _update_weights(
+        self,
+        components: tuple[float, float, float],
+        label: float,
+        observed: tuple[bool, bool, bool],
+    ) -> None:
         # Hedge: w_i <- w_i * exp(eta * y * x_i), then project onto the simplex.
-        logs = [math.log(max(w, _WEIGHT_FLOOR)) + self.eta * label * x for w, x in zip(self.weights, components)]
+        # A component that was not observed contributes no gradient.
+        logs = [
+            math.log(max(w, _WEIGHT_FLOOR)) + self.eta * label * (x if seen else 0.0)
+            for w, x, seen in zip(self.weights, components, observed)
+        ]
         peak = max(logs)
         lifted = [math.exp(v - peak) for v in logs]
         total = sum(lifted)
@@ -254,7 +268,15 @@ class GravityFieldLearner:
             "skipped": self.skipped,
             "resolved": self.resolved,
             "pending": [
-                {"x": [float(component) for component in item["x"]], "mid": float(item["mid"])}
+                {
+                    "x": [float(component) for component in item["x"]],
+                    "mid": float(item["mid"]),
+                    **(
+                        {"observed": [bool(flag) for flag in item["observed"]]}
+                        if item.get("observed") and not all(item["observed"])
+                        else {}
+                    ),
+                }
                 for item in self._pending
             ],
         }
@@ -301,7 +323,11 @@ class GravityFieldLearner:
                 components = tuple(_as_finite(value) for value in raw_x)
                 if any(component is None for component in components):
                     continue
-                restored.append({"x": components, "mid": mid})
+                restored_row: dict[str, Any] = {"x": components, "mid": mid}
+                raw_observed = item.get("observed")
+                if isinstance(raw_observed, list) and len(raw_observed) == 3:
+                    restored_row["observed"] = tuple(bool(flag) for flag in raw_observed)
+                restored.append(restored_row)
             learner._pending = restored
         return learner
 

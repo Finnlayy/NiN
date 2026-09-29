@@ -16,6 +16,8 @@ const WEIGHT_FLOOR = 1e-12;
 export interface PendingTick {
   x: [number, number, number];
   mid: number;
+  /** Missing means every component was observed. A false slot gets no gradient. */
+  observed?: [boolean, boolean, boolean];
 }
 
 export interface GravityLearnerJson {
@@ -157,13 +159,16 @@ export class GravityFieldLearner {
     const l2 = asFinite(tick.l2_depth);
     const iceberg = asFinite(tick.l3_iceberg);
     const poly = asFinite(tick.polymarket_prob);
-    if (mid == null || l2 == null || iceberg == null || poly == null) {
+    if (mid == null || l2 == null || iceberg == null) {
       this.skipped += 1;
       return false;
     }
     const breach = asBreach(tick.is_forbidden_zone);
     if (breach != null) this.updateQuantile(breach);
-    this.pending.push({ x: [l2, iceberg, poly], mid });
+    const observed: [boolean, boolean, boolean] = [true, true, poly != null];
+    const row: PendingTick = { x: [l2, iceberg, poly ?? 0], mid };
+    if (!observed[2]) row.observed = observed;
+    this.pending.push(row);
     this.resolve();
     return true;
   }
@@ -185,22 +190,42 @@ export class GravityFieldLearner {
       this.resolved += 1;
       if (move === 0 || this.eta === 0) continue;
       const label = move > 0 ? 1 : -1;
-      this.recordHit(past.x, label);
-      this.updateWeights(past.x, label);
+      const observed = past.observed ?? [true, true, true];
+      this.recordHit(past.x, label, observed);
+      this.updateWeights(past.x, label, observed);
     }
   }
 
-  private recordHit(components: [number, number, number], label: number): void {
-    const mean = (components[0] + components[1] + components[2]) / 3;
+  private recordHit(
+    components: [number, number, number],
+    label: number,
+    observed: [boolean, boolean, boolean],
+  ): void {
+    const active: number[] = [];
+    const weights: number[] = [];
+    for (let i = 0; i < 3; i += 1) {
+      if (!observed[i]) continue;
+      active.push(components[i]);
+      weights.push(this.weights[i]);
+    }
+    if (active.length === 0) return;
+    const mean = active.reduce((sum, value) => sum + value, 0) / active.length;
     let score = 0;
-    for (let i = 0; i < 3; i += 1) score += this.weights[i] * (components[i] - mean);
+    for (let i = 0; i < active.length; i += 1) score += weights[i] * (active[i] - mean);
     if (score === 0) return;
     this.directional += 1;
     if (score * label > 0) this.hits += 1;
   }
 
-  private updateWeights(components: [number, number, number], label: number): void {
-    const logs = this.weights.map((w, i) => Math.log(Math.max(w, WEIGHT_FLOOR)) + this.eta * label * components[i]);
+  private updateWeights(
+    components: [number, number, number],
+    label: number,
+    observed: [boolean, boolean, boolean],
+  ): void {
+    const logs = this.weights.map((w, i) => {
+      const feature = observed[i] ? components[i] : 0;
+      return Math.log(Math.max(w, WEIGHT_FLOOR)) + this.eta * label * feature;
+    });
     const peak = Math.max(...logs);
     const lifted = logs.map((v) => Math.exp(v - peak));
     const total = lifted.reduce((sum, v) => sum + v, 0);
@@ -243,7 +268,11 @@ export class GravityFieldLearner {
       directional: this.directional,
       skipped: this.skipped,
       resolved: this.resolved,
-      pending: this.pending.map((item) => ({ x: [...item.x] as [number, number, number], mid: item.mid })),
+      pending: this.pending.map((item) => {
+        const row: PendingTick = { x: [...item.x] as [number, number, number], mid: item.mid };
+        if (item.observed && item.observed.some((flag) => !flag)) row.observed = [...item.observed];
+        return row;
+      }),
     };
   }
 
@@ -297,14 +326,18 @@ export class GravityFieldLearner {
       const restored: PendingTick[] = [];
       for (const item of payload.pending) {
         if (!item || typeof item !== 'object') continue;
-        const row = item as { x?: unknown; mid?: unknown };
+        const row = item as { x?: unknown; mid?: unknown; observed?: unknown };
         if (!Array.isArray(row.x) || row.x.length !== 3) continue;
         const x0 = asFinite(row.x[0]);
         const x1 = asFinite(row.x[1]);
         const x2 = asFinite(row.x[2]);
         const mid = asFinite(row.mid);
         if (x0 == null || x1 == null || x2 == null || mid == null) continue;
-        restored.push({ x: [x0, x1, x2], mid });
+        const restoredTick: PendingTick = { x: [x0, x1, x2], mid };
+        if (Array.isArray(row.observed) && row.observed.length === 3) {
+          restoredTick.observed = [row.observed[0] === true, row.observed[1] === true, row.observed[2] === true];
+        }
+        restored.push(restoredTick);
       }
       learner.pending = restored;
     }

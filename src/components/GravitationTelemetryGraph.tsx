@@ -20,7 +20,8 @@ import {
 } from '../utils/omegaLogic';
 import { getLiveSpot } from '../utils/liveSpot';
 import { DEFAULT_GRAVITY_PARAMS, type GravityParams } from '../utils/gravityMath';
-import { ensureLiveGravityPoller, getLiveOmegaSnapshot, polyConsensusText, subscribeLiveGravity, type PolySource } from '../utils/liveGravity';
+import { intelConsensusText, intelEntersField, intelSourceLine, type IntelMix } from '../utils/intelMix';
+import { ensureLiveGravityPoller, getLiveOmegaSnapshot, polyConsensusText, polyEntersField, subscribeLiveGravity, type PolySource } from '../utils/liveGravity';
 
 interface GravitationTelemetryGraphProps {
   gravityField?: GravityFieldState;
@@ -61,6 +62,8 @@ export default function GravitationTelemetryGraph({
   const [icebergDepth, setIcebergDepth] = useState(0.5);
   const [polyProb, setPolyProb] = useState(0.5);
   const [polySource, setPolySource] = useState<PolySource>('neutral');
+  const [intel, setIntel] = useState<IntelMix | null>(null);
+  const polyLive = intel ? intelEntersField(intel) : polyEntersField(polySource);
   const [gravityParams, setGravityParams] = useState<GravityParams>(DEFAULT_GRAVITY_PARAMS);
   const [currentSpot, setCurrentSpot] = useState(spotPrice);
 
@@ -74,7 +77,7 @@ export default function GravitationTelemetryGraph({
     const now = Date.now();
     for (let i = 24; i >= 0; i--) {
       const t = now - i * 1500;
-      const forces = calculateGravitationForces(spotPrice, 0.5, 0.5, 0.5);
+      const forces = calculateGravitationForces(spotPrice, 0.5, 0.5, 0.5, DEFAULT_GRAVITY_PARAMS, false);
       initial.push({
         timeLabel: new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
         timestamp: t,
@@ -105,10 +108,18 @@ export default function GravitationTelemetryGraph({
       setIcebergDepth(snap.iceberg);
       setPolyProb(snap.poly);
       setPolySource(snap.polySource);
+      if (snap.intel) setIntel(snap.intel);
       if (snap.spotPrice > 0) setCurrentSpot(snap.spotPrice);
       setGravityParams(snap.params);
       if (!streamingRef.current) return;
-      const forces = calculateGravitationForces(snap.spotPrice, snap.l2, snap.iceberg, snap.poly, snap.params);
+      const forces = calculateGravitationForces(
+        snap.spotPrice,
+        snap.l2,
+        snap.iceberg,
+        snap.poly,
+        snap.params,
+        snap.intel ? intelEntersField(snap.intel) : polyEntersField(snap.polySource),
+      );
       const now = Date.now();
       setTimeSeries((prev) => {
         const nextPoint: TimeSeriesDataPoint = {
@@ -125,15 +136,61 @@ export default function GravitationTelemetryGraph({
     });
   }, []);
 
+  const spotRef = useRef(currentSpot);
+  spotRef.current = currentSpot;
+  const spotBucket = Number.isFinite(currentSpot) ? Math.round(currentSpot / 50) : 0;
+  useEffect(() => {
+    let cancelled = false;
+    const load = () => {
+      const spot = spotRef.current;
+      if (!(spot > 0)) return;
+      fetch(`/api/market/intel?spot=${spot}`)
+        .then((response) => (response.ok ? response.json() : null))
+        .then((body: unknown) => {
+          if (cancelled || !body || typeof body !== 'object') return;
+          const row = body as IntelMix;
+          if (!Array.isArray(row.sources)) return;
+          setIntel({
+            value: typeof row.value === 'number' && Number.isFinite(row.value) ? row.value : null,
+            contributions: Array.isArray(row.contributions) ? row.contributions : [],
+            sources: row.sources,
+          });
+        })
+        .catch(() => undefined);
+    };
+    load();
+    const timer = setInterval(load, 60_000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [spotBucket]);
+
   // Current Instantaneous Vector
   const vectorTelemetry: GravityForceVectorTelemetry = useMemo(() => {
-    return calculateGravitationForces(currentSpot, l2Depth, icebergDepth, polyProb, gravityParams);
-  }, [currentSpot, l2Depth, icebergDepth, polyProb, gravityParams]);
+    return calculateGravitationForces(
+      currentSpot,
+      l2Depth,
+      icebergDepth,
+      polyProb,
+      gravityParams,
+      polyLive,
+    );
+  }, [currentSpot, l2Depth, icebergDepth, polyProb, gravityParams, polyLive]);
 
   // Profile curve points across price spectrum
   const profilePoints: GravityForceCurvePoint[] = useMemo(() => {
-    return generateGravitationForceProfile(currentSpot, l2Depth, icebergDepth, polyProb, 2000, 60, gravityParams);
-  }, [currentSpot, l2Depth, icebergDepth, polyProb, gravityParams]);
+    return generateGravitationForceProfile(
+      currentSpot,
+      l2Depth,
+      icebergDepth,
+      polyProb,
+      2000,
+      60,
+      gravityParams,
+      polyLive,
+    );
+  }, [currentSpot, l2Depth, icebergDepth, polyProb, gravityParams, polyLive]);
 
   // Dimensions for SVG Graphs
   const width = 800;
@@ -234,6 +291,7 @@ export default function GravitationTelemetryGraph({
     setIcebergDepth(live?.iceberg ?? 0.5);
     setPolyProb(live?.poly ?? 0.5);
     setPolySource(live?.polySource ?? 'neutral');
+    setIntel(live?.intel ?? null);
     setGravityParams(live?.params ?? DEFAULT_GRAVITY_PARAMS);
     setCurrentSpot(live?.spotPrice ?? spotPrice);
     if (onLogEvent) {
@@ -267,7 +325,7 @@ export default function GravitationTelemetryGraph({
               </span>
             </div>
             <p className="text-xs text-slate-400 mt-0.5">
-              Vektorieller Kraftgradient: <strong className="text-cyan-300">F_vis ({Math.round(gravityParams.w_vis * 100)}%)</strong> + <strong className="text-purple-300">F_blind ({Math.round(gravityParams.w_blind * 100)}%)</strong> + <strong className="text-amber-300">F_poly ({Math.round(gravityParams.w_poly * 100)}%)</strong>
+              Vektorieller Kraftgradient: <strong className="text-cyan-300">F_vis ({Math.round(vectorTelemetry.weights.vis * 100)}%)</strong> + <strong className="text-purple-300">F_blind ({Math.round(vectorTelemetry.weights.blind * 100)}%)</strong> + <strong className="text-amber-300">F_poly ({Math.round(vectorTelemetry.weights.poly * 100)}%)</strong>
             </p>
           </div>
         </div>
@@ -434,7 +492,10 @@ export default function GravitationTelemetryGraph({
             </div>
           </div>
           <div className="flex items-center justify-between text-[10px] font-mono text-slate-400 mt-2 pt-2 border-t border-slate-800">
-            <span>Konsensus: <strong className="text-slate-200">{polyConsensusText(polyProb, polySource)}</strong>{polyProb >= 0.6 ? <span className="ml-1 text-amber-300">0.60</span> : null}</span>
+            <span className="flex flex-col gap-0.5">
+              <span>Konsensus: <strong className="text-slate-200">{intel ? intelConsensusText(intel) : polyConsensusText(polyProb, polySource)}</strong>{polyLive && polyProb >= 0.6 ? <span className="ml-1 text-amber-300">0.60</span> : null}</span>
+              {intelSourceLine(intel) ? <span className="text-slate-500">{intelSourceLine(intel)}</span> : null}
+            </span>
             <span className="flex items-center gap-1 text-amber-400/80">
               {showPoly ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3 text-slate-500" />}
               {showPoly ? 'Sichtbar' : 'Ausgeblendet'}

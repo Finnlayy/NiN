@@ -69,7 +69,7 @@ const atFallback = computeForces(fixture.spot, fixture.spot, 0.5, 0.5, fallbackP
 close(atFallback.fNet, atNeutral.fNet, 'fail-closed force');
 close(atFallback.fPoly, atNeutral.fPoly, 'fail-closed poly force');
 
-if (polyConsensusText(0.5, 'neutral') !== '50% Up') throw new Error('neutral label');
+if (polyConsensusText(0.5, 'neutral') !== 'ausgeschlossen') throw new Error('neutral label');
 if (polyConsensusText(0.4, 'gamma') !== '40% Up · Gamma') throw new Error('gamma label');
 if (polyConsensusText(0.4, 'stale') !== '40% Up · stale') throw new Error('stale label');
 

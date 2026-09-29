@@ -10,10 +10,11 @@ import { getLiveSpot } from './liveSpot';
 import {
   computeForces,
   DEFAULT_GRAVITY_PARAMS,
+  fieldWeights,
   normalizeParams,
   type GravityParams,
 } from './gravityMath';
-import { ensureLiveGravityPoller, getLiveOmegaSnapshot } from './liveGravity';
+import { ensureLiveGravityPoller, getLiveOmegaSnapshot, polyEntersField } from './liveGravity';
 
 export type SymbolLampState = 'GREEN_GLOW' | 'GREEN_SOLID' | 'YELLOW' | 'GRAY' | 'RED_GLOW';
 
@@ -341,9 +342,10 @@ export function calculateGravityField(
   blindIcebergDepth: number = 0.5,
   polymarketForwardProb: number = 0.5,
   params: GravityParams = DEFAULT_GRAVITY_PARAMS,
+  includePoly = true,
 ): GravityFieldState {
-  const weights = normalizeParams(params);
-  const forces = computeForces(spotPrice, spotPrice, visibleL2Depth, blindIcebergDepth, polymarketForwardProb, weights);
+  const weights = fieldWeights(normalizeParams(params), includePoly);
+  const forces = computeForces(spotPrice, spotPrice, visibleL2Depth, blindIcebergDepth, polymarketForwardProb, params, includePoly);
 
   return {
     spotPrice,
@@ -391,9 +393,10 @@ export function calculateGravitationForces(
   blindIcebergDepth: number = 0.5,
   polymarketForwardProb: number = 0.5,
   params: GravityParams = DEFAULT_GRAVITY_PARAMS,
+  includePoly = true,
 ): GravityForceVectorTelemetry {
-  const weights = normalizeParams(params);
-  const forces = computeForces(spotPrice, spotPrice, visibleL2Depth, blindIcebergDepth, polymarketForwardProb, weights);
+  const weights = fieldWeights(normalizeParams(params), includePoly);
+  const forces = computeForces(spotPrice, spotPrice, visibleL2Depth, blindIcebergDepth, polymarketForwardProb, params, includePoly);
   const forceNet = Number(forces.fNet.toFixed(2));
 
   let direction: GravityForceVectorTelemetry['direction'] = 'EQUILIBRIUM';
@@ -424,8 +427,8 @@ export function generateGravitationForceProfile(
   rangeSpan: number = 2000,
   steps: number = 50,
   params: GravityParams = DEFAULT_GRAVITY_PARAMS,
+  includePoly = true,
 ): GravityForceCurvePoint[] {
-  const weights = normalizeParams(params);
   const minP = spotPrice - rangeSpan;
   const maxP = spotPrice + rangeSpan;
   const stepSize = (maxP - minP) / Math.max(1, steps);
@@ -433,7 +436,7 @@ export function generateGravitationForceProfile(
 
   for (let i = 0; i <= steps; i++) {
     const p = Math.round(minP + i * stepSize);
-    const forces = computeForces(p, spotPrice, visibleL2Depth, blindIcebergDepth, polymarketForwardProb, weights);
+    const forces = computeForces(p, spotPrice, visibleL2Depth, blindIcebergDepth, polymarketForwardProb, params, includePoly);
     points.push({
       price: p,
       fVis: Number(forces.fVis.toFixed(2)),
@@ -783,6 +786,7 @@ export function getLiveOmegaTelemetry(): {
     live?.iceberg ?? 0.5,
     live?.poly ?? 0.5,
     params,
+    polyEntersField(live?.polySource ?? 'neutral'),
   );
   const candle = live?.lastCandle;
   const acSystem = candle
