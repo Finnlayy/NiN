@@ -3,6 +3,8 @@ import { multiProviderCore } from './multiProvider';
 import { botRegistry } from './bots';
 import { runAutoDcaWorker, getDcaDipStatus } from './autoDcaWorker';
 import { handlePricesRequest } from './prices';
+import { handleCandlesApi } from './candles';
+import { handleGravityApi } from './gravityWorker';
 import type { KrakenOrderExecutor } from './kraken';
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
@@ -171,6 +173,14 @@ export async function handleVercelApi(req: IncomingMessage, res: ServerResponse,
 
   if (url === '/api/worker/dca' && (method === 'GET' || method === 'POST')) {
     await runAutoDcaWorker(res, krakenExecutor);
+    return true;
+  }
+
+  if (await handleCandlesApi(req, res)) {
+    return true;
+  }
+
+  if (await handleGravityApi(req, res, krakenExecutor)) {
     return true;
   }
 

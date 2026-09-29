@@ -19,6 +19,8 @@ import {
 } from 'lucide-react';
 import { ViaNegativaState, GravityFieldState } from '../utils/omegaLogic';
 import { getLiveSpot } from '../utils/liveSpot';
+import { attractorShift } from '../utils/gravityMath';
+import { ensureLiveGravityPoller, subscribeLiveGravity } from '../utils/liveGravity';
 
 export interface GravityFieldVisualizerProps {
   spotPrice?: number;
@@ -61,16 +63,13 @@ export default function GravityFieldVisualizer({
   const [showBlind, setShowBlind] = useState<boolean>(true);
   const [showPolymarket, setShowPolymarket] = useState<boolean>(true);
 
-  // Field Weights (Blueprint §2: 25% Visible, 35% Blind, 40% Polymarket)
-  const wVis = 0.25;
-  const wBlind = 0.35;
-  const wPoly = 0.40;
+  const [wVis, setWVis] = useState(0.25);
+  const [wBlind, setWBlind] = useState(0.35);
+  const [wPoly, setWPoly] = useState(0.40);
 
-  // Calibrated parameters — scenario preset UI removed; values drift organically
-  // with the live feed (see below) and can be reset to defaults via handleReset.
-  const [polyProb, setPolyProb] = useState<number>(0.78);
-  const [l2Depth, setL2Depth] = useState<number>(1450); // Visible Bids/Asks depth
-  const [icebergDepth, setIcebergDepth] = useState<number>(2200); // Shadow hidden depth
+  const [polyProb, setPolyProb] = useState<number>(0.5);
+  const [l2Depth, setL2Depth] = useState<number>(0.5);
+  const [icebergDepth, setIcebergDepth] = useState<number>(0.5);
   const [simulatedPrice, setSimulatedPrice] = useState<number>(spotPrice);
 
   // Synchronize with external prop changes
@@ -84,34 +83,31 @@ export default function GravityFieldVisualizer({
   const [hoveredPoint, setHoveredPoint] = useState<PotentialPoint | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
 
-  // Organic micro-fluctuation live drift simulation
   useEffect(() => {
-    if (!isLiveDrift) return;
-
-    const interval = setInterval(() => {
-      const driftVis = (Math.random() - 0.49) * 14;
-      const driftIce = (Math.random() - 0.49) * 18;
-      const driftPoly = (Math.random() - 0.49) * 0.004;
-
-      setL2Depth(prev => Math.max(600, Math.min(2800, Math.round(prev + driftVis))));
-      setIcebergDepth(prev => Math.max(1000, Math.min(4200, Math.round(prev + driftIce))));
-      setPolyProb(prev => Math.max(0.15, Math.min(0.95, Number((prev + driftPoly).toFixed(3)))));
-    }, 1800);
-
-    return () => clearInterval(interval);
+    ensureLiveGravityPoller();
+    return subscribeLiveGravity((snap) => {
+      if (!isLiveDrift) return;
+      setL2Depth(snap.l2);
+      setIcebergDepth(snap.iceberg);
+      setPolyProb(snap.poly);
+      if (snap.spotPrice > 0) setSimulatedPrice(snap.spotPrice);
+      setWVis(snap.params.w_vis);
+      setWBlind(snap.params.w_blind);
+      setWPoly(snap.params.w_poly);
+    });
   }, [isLiveDrift]);
 
   // Sub-component individual potential minima
   const pStarVis = useMemo(() => {
-    return Math.round(simulatedPrice + (l2Depth - 1400) * 0.42);
+    return Math.round(simulatedPrice + attractorShift('vis', l2Depth));
   }, [simulatedPrice, l2Depth]);
 
   const pStarBlind = useMemo(() => {
-    return Math.round(simulatedPrice + (icebergDepth - 2000) * 0.32);
+    return Math.round(simulatedPrice + attractorShift('blind', icebergDepth));
   }, [simulatedPrice, icebergDepth]);
 
   const pStarPoly = useMemo(() => {
-    return Math.round(simulatedPrice + (polyProb - 0.5) * 1050);
+    return Math.round(simulatedPrice + attractorShift('poly', polyProb));
   }, [simulatedPrice, polyProb]);
 
   // Exact composite potential minimum P* (where ∇V_total = 0)
@@ -160,9 +156,9 @@ export default function GravityFieldVisualizer({
       const dPoly = (p - pStarPoly) / 420;
 
       // Parabolic harmonic wells with orderbook & dark-pool perturbations
-      const vVisRaw = 18 + Math.pow(dVis, 2) * 28 + Math.sin((p - simulatedPrice) / 160) * 3.5;
-      const vBlindRaw = 22 + Math.pow(dBlind, 2) * 32 + Math.cos((p - simulatedPrice) / 210) * 4.2;
-      const vPolyRaw = 15 + Math.pow(dPoly, 2) * 38 + (1 - polyProb) * 8;
+      const vVisRaw = 18 + Math.pow(dVis, 2) * 28;
+      const vBlindRaw = 22 + Math.pow(dBlind, 2) * 32;
+      const vPolyRaw = 15 + Math.pow(dPoly, 2) * 38;
 
       const vVis = Number(Math.max(5, Math.min(95, vVisRaw)).toFixed(2));
       const vBlind = Number(Math.max(5, Math.min(95, vBlindRaw)).toFixed(2));
@@ -171,8 +167,8 @@ export default function GravityFieldVisualizer({
       const vTotal = Number((wVis * vVis + wBlind * vBlind + wPoly * vPoly).toFixed(2));
 
       // Gradient Forces F_i = -dV_i/dP
-      const forceVis = Number((-(p - pStarVis) * 0.10 + Math.cos((p - simulatedPrice) / 160) * 5).toFixed(2));
-      const forceBlind = Number((-(p - pStarBlind) * 0.13 + Math.sin((p - simulatedPrice) / 210) * 6).toFixed(2));
+      const forceVis = Number((-(p - pStarVis) * 0.10).toFixed(2));
+      const forceBlind = Number((-(p - pStarBlind) * 0.13).toFixed(2));
       const forcePoly = Number((-(p - pStarPoly) * 0.16).toFixed(2));
       const forceNet = Number((wVis * forceVis + wBlind * forceBlind + wPoly * forcePoly).toFixed(2));
 
@@ -313,9 +309,12 @@ export default function GravityFieldVisualizer({
   // Preset scenario handlers removed — test scenarios are no longer offered
   // in the UI. Only the plain reset-to-defaults control remains.
   const handleReset = () => {
-    setPolyProb(0.78);
-    setL2Depth(1450);
-    setIcebergDepth(2200);
+    setPolyProb(0.5);
+    setL2Depth(0.5);
+    setIcebergDepth(0.5);
+    setWVis(0.25);
+    setWBlind(0.35);
+    setWPoly(0.40);
     setSimulatedPrice(spotPrice);
     if (onLogEvent) {
       onLogEvent('Gravitationsfeld-Parameter auf Standardwerte zurückgesetzt.', 'success', 'GravityVisualizer');
@@ -398,7 +397,7 @@ export default function GravityFieldVisualizer({
             }`}
           >
             <span className={`w-2 h-2 rounded-full ${isLiveDrift ? 'bg-emerald-400 animate-ping' : 'bg-amber-400'}`} />
-            {isLiveDrift ? 'Drift Aktiv' : 'Gefroren'}
+            {isLiveDrift ? 'Live Feld' : 'Gefroren'}
           </button>
 
           <button

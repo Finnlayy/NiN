@@ -1,0 +1,25 @@
+name: Gravity Paper Worker
+
+# Learn one closed 1h candle and, when the Judge passes, place a single
+# clip on the nin-paper-gravity ledger. Paper is the default execution mode
+# on the server; this cron does not send a live order.
+
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger gravity worker
+        run: |
+          RESPONSE=$(curl -sS -w "\nHTTP_STATUS:%{http_code}" \
+            https://ni-n.vercel.app/api/worker/gravity)
+          echo "$RESPONSE"
+          STATUS=$(echo "$RESPONSE" | tail -n1 | cut -d: -f2)
+          if [ "$STATUS" -ne 200 ]; then
+            echo "Worker endpoint returned HTTP $STATUS" >&2
+            exit 1
+          fi

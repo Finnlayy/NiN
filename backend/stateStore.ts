@@ -63,3 +63,15 @@ export function setJson(key: string, value: unknown): void {
     /* synchronous config errors are equally non-fatal */
   }
 }
+
+/** Await the Redis write. Returns false when the store is absent or the write fails. */
+export async function setJsonAwaited(key: string, value: unknown): Promise<boolean> {
+  const redis = getRedis();
+  if (!redis) return false;
+  try {
+    await redis.set(key, value as never);
+    return true;
+  } catch {
+    return false;
+  }
+}

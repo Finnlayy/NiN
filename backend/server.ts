@@ -21,6 +21,8 @@ import { kernelEngine } from './kernel';
 import { engineTelemetryHub } from './telemetryEngine';
 import { botRegistry } from './bots';
 import { handlePricesRequest } from './prices';
+import { handleCandlesApi } from './candles';
+import { handleGravityApi } from './gravityWorker';
 
 const krakenExecutor = new KrakenOrderExecutor();
 
@@ -398,6 +400,14 @@ async function startServer() {
         } catch (error) {
           sendJson(res, 500, { error: String(error) });
         }
+        return;
+      }
+
+      if (await handleCandlesApi(req, res)) {
+        return;
+      }
+
+      if (await handleGravityApi(req, res, krakenExecutor)) {
         return;
       }
 

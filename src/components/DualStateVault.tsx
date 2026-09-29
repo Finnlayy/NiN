@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { ensureLiveGravityPoller, subscribeLiveGravity, type LiveFill } from '../utils/liveGravity';
 import {
   Wallet,
   Coins,
@@ -38,7 +39,7 @@ interface TWAPSliceTelemetry {
 export default function DualStateVault({
   onLogEvent,
   className = '',
-  initialTotalAUM = 100000.0,
+  initialTotalAUM = 0,
   initialLeverage = 8.5,
 }: DualStateVaultProps) {
   // AUM and Allocation State
@@ -48,9 +49,10 @@ export default function DualStateVault({
   const [vaultState, setVaultState] = useState<VaultStateMode>('STATE_A_AUTO_EARN');
   
   // Real-time Ticking and Accrual
-  const [accruedYieldUSD, setAccruedYieldUSD] = useState<number>(14.285);
-  const [marginRealizedPnL] = useState<number>(1240.50);
-  const [marginUnrealizedPnL, setMarginUnrealizedPnL] = useState<number>(382.10);
+  const [accruedYieldUSD] = useState<number>(0);
+  const [marginRealizedPnL] = useState<number>(0);
+  const [marginUnrealizedPnL, setMarginUnrealizedPnL] = useState<number>(0);
+  const [paperFills, setPaperFills] = useState<LiveFill[]>([]);
   const [unbondingLatencyMs, setUnbondingLatencyMs] = useState<number>(23.8);
   const [isTransitioning, setIsTransitioning] = useState<boolean>(false);
   const [inspectorOpen, setInspectorOpen] = useState<boolean>(false);
@@ -72,6 +74,10 @@ export default function DualStateVault({
   // Derived 90/10 Split Values
   const marginAllocationUSD = totalAUM * 0.9;
   const vaultAllocationUSD = totalAUM * 0.1;
+  const pnlBase = totalAUM - marginUnrealizedPnL;
+  const pnlPercent = pnlBase !== 0 ? (marginUnrealizedPnL / pnlBase) * 100 : 0;
+  const pnlDigits = Math.abs(pnlPercent) > 0 && Math.abs(pnlPercent) < 0.01 ? 4 : 2;
+  const pnlUp = marginUnrealizedPnL >= 0;
   const effectivePurchasingPower = marginAllocationUSD * dynamicLeverage;
 
   // Currency Conversions
@@ -96,29 +102,15 @@ export default function DualStateVault({
     }
   }, []);
 
-  // Micro-Ticking Realtime Heartbeat
+  // Equity and PnL come from the gravity paper ledger, not a random walk.
   useEffect(() => {
-    const interval = setInterval(() => {
-      // Auto-Earn yield tick (~7.25% APY on 10% vault = ~$725/year = ~$0.000023/sec)
-      if (vaultState === 'STATE_A_AUTO_EARN') {
-        setAccruedYieldUSD(prev => prev + 0.000023 * 2);
-      }
-
-      // Live micro-fluctuation in active margin positions PnL
-      setMarginUnrealizedPnL(prev => {
-        const delta = (Math.random() - 0.48) * 1.5;
-        return Math.max(0, prev + delta);
-      });
-
-      // Update total AUM dynamically
-      setTotalAUM(prev => {
-        const microTick = (Math.random() - 0.49) * 0.4;
-        return Number((prev + microTick).toFixed(2));
-      });
-    }, 1000);
-
-    return () => clearInterval(interval);
-  }, [vaultState]);
+    ensureLiveGravityPoller();
+    return subscribeLiveGravity((snap) => {
+      if (typeof snap.equityUSD === 'number') setTotalAUM(snap.equityUSD);
+      if (typeof snap.pnlUSD === 'number') setMarginUnrealizedPnL(snap.pnlUSD);
+      setPaperFills(snap.fills);
+    });
+  }, []);
 
   // TWAP execution ticker if in State B
   useEffect(() => {
@@ -277,9 +269,9 @@ export default function DualStateVault({
               <p className="text-3xl md:text-4xl lg:text-5xl font-extrabold text-white font-mono tracking-tight">
                 {formatCurrency(totalAUM)}
               </p>
-              <span className="text-xs font-mono text-emerald-400 font-semibold flex items-center">
+              <span className={`text-xs font-mono font-semibold flex items-center ${pnlUp ? 'text-emerald-400' : 'text-rose-400'}`}>
                 <TrendingUp className="w-3.5 h-3.5 mr-1" />
-                +$1,622.60 (+1.62% 24h)
+                {pnlUp ? '+' : ''}{formatCurrency(marginUnrealizedPnL)} ({pnlUp ? '+' : ''}{pnlPercent.toFixed(pnlDigits)}% unrealisiert)
               </span>
             </div>
 
@@ -484,29 +476,17 @@ export default function DualStateVault({
                 Aktive Pyramidisierungs-Tranchen
               </span>
 
-              <div className="flex items-center justify-between py-1 border-b border-white/5 text-[11px]">
-                <div className="flex items-center gap-1.5">
-                  <span className="w-1.5 h-1.5 rounded-full bg-cyan-400" />
-                  <span className="font-bold text-white">SUI / USD Long</span>
-                  <span className="text-slate-400">(Scout + 2 Add-Ons)</span>
+              {paperFills.length === 0 ? (
+                <div className="py-1 text-[11px] text-slate-500">Keine Fills auf nin-paper-gravity</div>
+              ) : paperFills.map((fill, index) => (
+                <div key={`${fill.side}-${fill.price}-${fill.volume}-${index}`} className="flex items-center justify-between py-1 border-b border-white/5 text-[11px]">
+                  <div className="flex items-center gap-1.5">
+                    <span className={`w-1.5 h-1.5 rounded-full ${fill.side === 'buy' ? 'bg-emerald-400' : 'bg-rose-400'}`} />
+                    <span className="font-bold text-white">BTC/USD {fill.side === 'buy' ? 'Buy' : 'Sell'}</span>
+                    <span className="text-slate-400">{fill.volume} @ {fill.price.toLocaleString('en-US')}</span>
+                  </div>
                 </div>
-                <div className="text-right">
-                  <span className="text-emerald-400 font-bold">+$480.20</span>
-                  <span className="text-[10px] text-slate-500 ml-1">Unrealisiert</span>
-                </div>
-              </div>
-
-              <div className="flex items-center justify-between py-1 border-b border-white/5 text-[11px]">
-                <div className="flex items-center gap-1.5">
-                  <span className="w-1.5 h-1.5 rounded-full bg-cyan-400" />
-                  <span className="font-bold text-white">SOL / USD Long</span>
-                  <span className="text-slate-400">(Scout Tranche 1)</span>
-                </div>
-                <div className="text-right">
-                  <span className="text-emerald-400 font-bold">+${marginUnrealizedPnL.toFixed(2)}</span>
-                  <span className="text-[10px] text-slate-500 ml-1">Live Tick</span>
-                </div>
-              </div>
+              ))}
 
               <div className="flex items-center justify-between pt-1 text-[11px] border-t border-white/5 text-slate-400">
                 <span>Historisch Realisierter Margin PnL:</span>

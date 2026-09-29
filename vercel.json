@@ -26,6 +26,9 @@
     { "source": "/api/prices", "destination": "/api/handler" },
     { "source": "/api/prices/:path*", "destination": "/api/handler" },
     { "source": "/api/worker/dca", "destination": "/api/handler" },
-    { "source": "/api/worker/dca/:path*", "destination": "/api/handler" }
+    { "source": "/api/worker/dca/:path*", "destination": "/api/handler" },
+    { "source": "/api/worker/gravity", "destination": "/api/handler" },
+    { "source": "/api/gravity/:path*", "destination": "/api/handler" },
+    { "source": "/api/market/:path*", "destination": "/api/handler" }
   ]
 }
