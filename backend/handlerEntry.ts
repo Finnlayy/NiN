@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import { handleKrakenApi } from './krakenHttp';
 import { handleVercelApi } from './vercelApi';
+import { handleRequest } from './handleRequest';
 import { KrakenOrderExecutor } from './kraken';
 
 export const maxDuration = 60;
@@ -37,8 +38,14 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
       return;
     }
 
-    const handled = await handleKrakenApi(req, res, executor);
-    if (handled || res.headersSent) {
+    if (await handleKrakenApi(req, res, executor)) {
+      return;
+    }
+
+    // Learning, kernel, omega, Connect, and task routes from the dev server.
+    // Kraken, prices, bots, health, and the DCA worker already returned above,
+    // so they keep the shared executor and the live-price bot list.
+    if (await handleRequest(req, res)) {
       return;
     }
     sendJson(res, 404, { error: 'Not found', url: req.url || '' });

@@ -4,7 +4,8 @@
   "outputDirectory": "dist",
   "functions": {
     "api/handler.js": {
-      "maxDuration": 60
+      "maxDuration": 60,
+      "includeFiles": "prompts/**"
     }
   },
   "rewrites": [
@@ -26,6 +27,16 @@
     { "source": "/api/prices", "destination": "/api/handler" },
     { "source": "/api/prices/:path*", "destination": "/api/handler" },
     { "source": "/api/worker/dca", "destination": "/api/handler" },
-    { "source": "/api/worker/dca/:path*", "destination": "/api/handler" }
+    { "source": "/api/worker/dca/:path*", "destination": "/api/handler" },
+    { "source": "/api/connect/github", "destination": "/api/handler" },
+    { "source": "/api/architect/status", "destination": "/api/handler" },
+    { "source": "/api/learning", "destination": "/api/handler" },
+    { "source": "/api/learning/:path*", "destination": "/api/handler" },
+    { "source": "/learning", "destination": "/api/handler" },
+    { "source": "/learning/:path*", "destination": "/api/handler" },
+    { "source": "/api/kernel/:path*", "destination": "/api/handler" },
+    { "source": "/api/telemetry/:path*", "destination": "/api/handler" },
+    { "source": "/api/omega/:path*", "destination": "/api/handler" },
+    { "source": "/api/task", "destination": "/api/handler" }
   ]
 }
