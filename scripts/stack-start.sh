@@ -140,6 +140,52 @@ start_ollama() {
   echo $! > "$OLLAMA_PID_FILE"
 }
 
+default_ollama_model() {
+  local line
+  local manifest="$ROOT/config/ollama-models.txt"
+  [[ -f "$manifest" ]] || return 0
+  while read -r line || [[ -n "$line" ]]; do
+    line="${line%%#*}"
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    [[ -z "$line" ]] && continue
+    printf '%s\n' "$line"
+    return 0
+  done < "$manifest"
+}
+
+ollama_model_present() {
+  local model="$1"
+  local name
+  while read -r name; do
+    [[ "$name" == "$model" ]] && return 0
+  done < <(ollama list | awk 'NR > 1 { print $1 }')
+  return 1
+}
+
+ensure_ollama_models() {
+  local manifest="$ROOT/config/ollama-models.txt"
+  local line model
+  if [[ ! -f "$manifest" ]]; then
+    echo "No local model list at config/ollama-models.txt." >&2
+    return 1
+  fi
+  export OLLAMA_HOST="127.0.0.1:${OLLAMA_PORT}"
+  while read -r line || [[ -n "$line" ]]; do
+    line="${line%%#*}"
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    [[ -z "$line" ]] && continue
+    model="$line"
+    if ollama_model_present "$model"; then
+      echo "Local model already present: ${model}"
+      continue
+    fi
+    echo "Pulling local model ${model}..."
+    ollama pull "$model"
+  done < "$manifest"
+}
+
 wait_for_ollama() {
   local pid="$1"
   local i
@@ -303,7 +349,14 @@ main() {
   ollama_pid="$(read_pid "$OLLAMA_PID_FILE")"
   if [[ -n "$ollama_pid" ]]; then
     wait_for_ollama "$ollama_pid"
+  elif ! ollama_api_ready; then
+    echo "Ollama is not running." >&2
+    return 1
   fi
+  export OLLAMA_HOST="127.0.0.1:${OLLAMA_PORT}"
+  ensure_ollama_models
+  export LM_STUDIO_BASE_URL="${LM_STUDIO_BASE_URL:-http://127.0.0.1:${OLLAMA_PORT}/v1}"
+  export LM_STUDIO_MODEL="${LM_STUDIO_MODEL:-$(default_ollama_model)}"
 
   if web_is_running; then
     echo "Web stack is already running on http://127.0.0.1:${WEB_PORT}"
@@ -328,6 +381,7 @@ main() {
   echo
   echo "Stack is up."
   echo "  Ollama:  http://127.0.0.1:${OLLAMA_PORT}"
+  echo "  Models:  $(OLLAMA_HOST="127.0.0.1:${OLLAMA_PORT}" ollama list | awk 'NR > 1 { printf "%s ", $1 }')"
   echo "  Web UI:  http://127.0.0.1:${WEB_PORT}"
   echo "  Ollama log: $OLLAMA_LOG"
   echo "  Web log: $WEB_LOG"

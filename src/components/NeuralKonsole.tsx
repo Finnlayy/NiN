@@ -59,8 +59,8 @@ export default function NeuralKonsole() {
   const [isTesting, setIsTesting] = useState(false);
 
   // Editable config state
-  const [lmBaseUrl, setLmBaseUrl] = useState('http://localhost:1234/v1');
-  const [lmModel, setLmModel] = useState('local-model');
+  const [lmBaseUrl, setLmBaseUrl] = useState('http://127.0.0.1:11434/v1');
+  const [lmModel, setLmModel] = useState('qwen2.5-coder:3b');
   const [oneProviderUrl, setOneProviderUrl] = useState('https://api.oneprovider.dev');
   const [oneProviderKey, setOneProviderKey] = useState('');
   const [oneProviderModel, setOneProviderModel] = useState('claude-sonnet-4-6');
@@ -399,7 +399,7 @@ export default function NeuralKonsole() {
                 </span>
               </div>
               <p className="text-[11px] text-slate-400">
-                Connects to your local machine (LM Studio Local Server). Start the server in LM Studio on port 1234.
+                Connects to the local Ollama server. Start NiN pulls the local models and serves them on port 11434.
               </p>
 
               <div className="space-y-1.5">
@@ -408,7 +408,7 @@ export default function NeuralKonsole() {
                   type="text"
                   value={lmBaseUrl}
                   onChange={e => setLmBaseUrl(e.target.value)}
-                  placeholder="http://localhost:1234/v1"
+                  placeholder="http://127.0.0.1:11434/v1"
                   className="w-full bg-[#05070a] border border-slate-700 text-slate-200 rounded px-2.5 py-1.5 text-xs outline-none focus:border-emerald-500"
                 />
               </div>
@@ -419,7 +419,7 @@ export default function NeuralKonsole() {
                   type="text"
                   value={lmModel}
                   onChange={e => setLmModel(e.target.value)}
-                  placeholder="local-model or qwen2.5-coder-32b"
+                  placeholder="qwen2.5-coder:3b"
                   className="w-full bg-[#05070a] border border-slate-700 text-slate-200 rounded px-2.5 py-1.5 text-xs outline-none focus:border-emerald-500"
                 />
               </div>
