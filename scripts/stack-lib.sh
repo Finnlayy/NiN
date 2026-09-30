@@ -10,9 +10,12 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 STATE_DIR="${XDG_RUNTIME_DIR:-/tmp}/nin-stack"
 WEB_PID_FILE="$STATE_DIR/web.pid"
 GUI_PID_FILE="$STATE_DIR/gui.pid"
+OLLAMA_PID_FILE="$STATE_DIR/ollama.pid"
 WEB_LOG="$STATE_DIR/web.log"
 GUI_LOG="$STATE_DIR/gui.log"
+OLLAMA_LOG="$STATE_DIR/ollama.log"
 WEB_PORT=3000
+OLLAMA_PORT=11434
 
 prepend_toolchain_path() {
   local nvm_root="$HOME/.nvm/versions/node"
@@ -81,10 +84,39 @@ stack_pids() {
   [[ "$nullglob_was" -eq 1 ]] || shopt -u nullglob
 }
 
-listeners_on_web_port() {
+listeners_on_port() {
+  local port="$1"
   if command -v lsof >/dev/null 2>&1; then
-    lsof -nP -iTCP:"$WEB_PORT" -sTCP:LISTEN -t 2>/dev/null || true
+    lsof -nP -iTCP:"$port" -sTCP:LISTEN -t 2>/dev/null || true
   fi
+}
+
+listeners_on_web_port() {
+  listeners_on_port "$WEB_PORT"
+}
+
+is_ollama_process() {
+  local pid="$1"
+  local path="/proc/${pid}/cmdline"
+  [[ "$pid" == "$$" || "$pid" == "${PPID:-}" ]] && return 1
+  [[ -r "$path" ]] || return 1
+  grep -a -z -q 'ollama' "$path" || return 1
+  grep -a -z -q -x 'serve' "$path" && return 0
+  grep -a -z -q -x 'runner' "$path"
+}
+
+# Print pids of ollama serve and its runner, one per line.
+ollama_pids() {
+  local pid nullglob_was=0
+  shopt -q nullglob && nullglob_was=1
+  shopt -s nullglob
+  for pid in /proc/[0-9]*; do
+    pid="${pid#/proc/}"
+    if is_ollama_process "$pid"; then
+      printf '%s\n' "$pid"
+    fi
+  done
+  [[ "$nullglob_was" -eq 1 ]] || shopt -u nullglob
 }
 
 kill_group() {

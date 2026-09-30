@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install missing NiN dependencies, then start the web stack and Architect GUI.
+# Install missing NiN dependencies, then start Ollama, the web stack, and the Architect GUI.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -49,6 +49,115 @@ ensure_gui_libs() {
   else
     echo "GUI libraries are missing and sudo is unavailable. The Architect window may not open."
   fi
+}
+
+ensure_ollama_binary() {
+  if command -v ollama >/dev/null 2>&1; then
+    echo "Ollama is already installed."
+    return 0
+  fi
+  echo "Installing Ollama..."
+  if ! sudo -n true 2>/dev/null; then
+    echo "Ollama is not installed and sudo is unavailable." >&2
+    return 1
+  fi
+  if ! command -v zstd >/dev/null 2>&1; then
+    sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq
+    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq zstd
+  fi
+  local arch url
+  case "$(uname -m)" in
+    x86_64) arch="amd64" ;;
+    aarch64 | arm64) arch="arm64" ;;
+    *)
+      echo "Unsupported architecture for Ollama: $(uname -m)" >&2
+      return 1
+      ;;
+  esac
+  sudo install -o 0 -g 0 -m 755 -d /usr/local/bin /usr/local/lib/ollama
+  url="https://ollama.com/download/ollama-linux-${arch}.tar.zst"
+  if curl --fail --silent --head --location "$url" >/dev/null; then
+    curl --fail --show-error --location "$url" | zstd -d | sudo tar -xf - -C /usr/local
+  else
+    url="https://ollama.com/download/ollama-linux-${arch}.tgz"
+    curl --fail --show-error --location "$url" | sudo tar -xzf - -C /usr/local
+  fi
+  if [[ ! -x /usr/local/bin/ollama && -x /usr/local/ollama ]]; then
+    sudo ln -sf /usr/local/ollama /usr/local/bin/ollama
+  fi
+  hash -r
+  if ! command -v ollama >/dev/null 2>&1; then
+    echo "Ollama installation finished, but the ollama command is still missing." >&2
+    return 1
+  fi
+  echo "Installed Ollama."
+}
+
+ollama_api_ready() {
+  curl -sf "http://127.0.0.1:${OLLAMA_PORT}/api/version" >/dev/null
+}
+
+ollama_is_running() {
+  local pid found
+  if ollama_api_ready; then
+    pid="$(read_pid "$OLLAMA_PID_FILE")"
+    if ! pid_alive "$pid"; then
+      pid=""
+      while read -r found; do
+        pid="$found"
+        break
+      done < <(ollama_pids)
+      if [[ -n "$pid" ]]; then
+        printf '%s\n' "$pid" > "$OLLAMA_PID_FILE"
+      fi
+    fi
+    return 0
+  fi
+  return 1
+}
+
+start_ollama() {
+  local listener foreign=""
+  if ollama_is_running; then
+    echo "Ollama is already running on http://127.0.0.1:${OLLAMA_PORT}"
+    return 0
+  fi
+  while read -r listener; do
+    [[ -z "$listener" ]] && continue
+    if is_ollama_process "$listener"; then
+      printf '%s\n' "$listener" > "$OLLAMA_PID_FILE"
+      echo "Ollama is already running on http://127.0.0.1:${OLLAMA_PORT}"
+      return 0
+    fi
+    foreign="${foreign} ${listener}"
+  done < <(listeners_on_port "$OLLAMA_PORT")
+  if [[ -n "${foreign// /}" ]]; then
+    echo "Port ${OLLAMA_PORT} is already used by another program (pid${foreign})." >&2
+    return 1
+  fi
+  echo "Starting Ollama on http://127.0.0.1:${OLLAMA_PORT}"
+  setsid bash -c 'export OLLAMA_HOST="127.0.0.1:$1" && exec ollama serve' bash "$OLLAMA_PORT" >"$OLLAMA_LOG" 2>&1 </dev/null &
+  echo $! > "$OLLAMA_PID_FILE"
+}
+
+wait_for_ollama() {
+  local pid="$1"
+  local i
+  for i in $(seq 1 60); do
+    if ollama_api_ready; then
+      echo "Ollama is ready."
+      return 0
+    fi
+    if ! pid_alive "$pid"; then
+      echo "Ollama exited. Last log lines:" >&2
+      tail -n 40 "$OLLAMA_LOG" >&2 || true
+      return 1
+    fi
+    sleep 1
+  done
+  echo "Ollama did not become ready. Last log lines:" >&2
+  tail -n 40 "$OLLAMA_LOG" >&2 || true
+  return 1
 }
 
 ensure_node() {
@@ -182,11 +291,19 @@ main() {
   local started_web=0
   local web_pid foreign
 
+  local ollama_pid
+
   echo "NiN stack start"
   echo "Repository: $ROOT"
   ensure_gui_libs
+  ensure_ollama_binary
   ensure_node
   ensure_python
+  start_ollama
+  ollama_pid="$(read_pid "$OLLAMA_PID_FILE")"
+  if [[ -n "$ollama_pid" ]]; then
+    wait_for_ollama "$ollama_pid"
+  fi
 
   if web_is_running; then
     echo "Web stack is already running on http://127.0.0.1:${WEB_PORT}"
@@ -210,7 +327,9 @@ main() {
 
   echo
   echo "Stack is up."
+  echo "  Ollama:  http://127.0.0.1:${OLLAMA_PORT}"
   echo "  Web UI:  http://127.0.0.1:${WEB_PORT}"
+  echo "  Ollama log: $OLLAMA_LOG"
   echo "  Web log: $WEB_LOG"
   echo "  GUI log: $GUI_LOG"
 }

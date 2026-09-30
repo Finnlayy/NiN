@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Stop the NiN web stack and the Architect terminal.
+# Stop Ollama, the NiN web stack, and the Architect terminal.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -23,7 +23,12 @@ main() {
     pids+=("$pid")
   done < <(stack_pids)
 
-  for file in "$WEB_PID_FILE" "$GUI_PID_FILE"; do
+  while read -r pid; do
+    [[ -z "$pid" ]] && continue
+    pids+=("$pid")
+  done < <(ollama_pids)
+
+  for file in "$WEB_PID_FILE" "$GUI_PID_FILE" "$OLLAMA_PID_FILE"; do
     pid="$(read_pid "$file")"
     if pid_alive "$pid"; then
       pids+=("$pid")
@@ -32,13 +37,13 @@ main() {
 
   while read -r pid; do
     [[ -z "$pid" ]] && continue
-    if is_stack_process "$pid"; then
+    if is_stack_process "$pid" || is_ollama_process "$pid"; then
       pids+=("$pid")
     fi
-  done < <(listeners_on_web_port)
+  done < <(listeners_on_web_port; listeners_on_port "$OLLAMA_PORT")
 
   if [[ ${#pids[@]} -eq 0 ]]; then
-    rm -f "$WEB_PID_FILE" "$GUI_PID_FILE"
+    rm -f "$WEB_PID_FILE" "$GUI_PID_FILE" "$OLLAMA_PID_FILE"
     echo "Stack is already stopped."
     return 0
   fi
@@ -63,9 +68,9 @@ main() {
     [[ -z "$pid" ]] && continue
     echo "  still running pid ${pid}, stopping again"
     kill_group "$pid"
-  done < <(stack_pids)
+  done < <(stack_pids; ollama_pids)
 
-  rm -f "$WEB_PID_FILE" "$GUI_PID_FILE"
+  rm -f "$WEB_PID_FILE" "$GUI_PID_FILE" "$OLLAMA_PID_FILE"
   echo "Stack is stopped."
 }
 
