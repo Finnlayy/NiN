@@ -1,0 +1,16 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Stop NiN
+Name[de]=NiN stoppen
+GenericName=Stop the Neural Orchestrator stack
+GenericName[de]=Neural Orchestrator stoppen
+Comment=Stop the web stack and the Architect terminal
+Comment[de]=Web-Stack und Architect-Terminal stoppen
+Exec=@ROOT@/scripts/stack-stop.sh
+Path=@ROOT@
+Icon=@ROOT@/desktop/icons/nin-stop.png
+Terminal=true
+Categories=Development;
+StartupNotify=true
+Keywords=nin;orchestrator;stop;
