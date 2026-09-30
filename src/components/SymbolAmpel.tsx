@@ -552,7 +552,7 @@ export default function SymbolAmpel({ onLogEvent, className = '' }: SymbolAmpelP
 
       {/* ── TRADING BOT STATS POPUP TEMPLATE (MIT INTEGRIERTEM AMPELSYSTEM) ── */}
       {inspectorOpen && selectedLeader && (() => {
-        const curPrice = selectedLeader.priceUSD || getLiveSpot(selectedLeader.symbol as LiveSymbol, selectedLeader.symbol === 'BTC' ? 64200 : selectedLeader.symbol === 'ETH' ? 2450 : selectedLeader.symbol === 'SOL' ? 142 : 41.25);
+        const curPrice = selectedLeader.priceUSD || getLiveSpot(selectedLeader.symbol as LiveSymbol);
         const changePct = selectedLeader.change24h !== undefined ? selectedLeader.change24h : 5.2;
         const isProfit = changePct >= 0 && selectedLeader.lampState !== 'RED_GLOW';
         

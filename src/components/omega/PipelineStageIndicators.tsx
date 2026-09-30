@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { getLiveSpot } from '../../utils/liveSpot';
 import {
   Workflow,
   CheckCircle2,
@@ -36,6 +37,9 @@ export default function PipelineStageIndicators({
     setInternalStep(step);
     onSelectStep?.(step);
   };
+
+  const baseline = getLiveSpot('BTC');
+  const usd = (price: number) => `$${price.toLocaleString('en-US', { maximumFractionDigits: 0 })} USD`;
 
   const stages: PipelineStage[] = [
     {
@@ -102,9 +106,9 @@ export default function PipelineStageIndicators({
       status: 'ACTIVE',
       latencyMs: 8.2,
       telemetryMetrics: [
-        { label: 'Baseline Mittelwert', value: '$64,280 USD', isHighlighted: true },
-        { label: 'Oberes Band (+2.5σ)', value: '$66,400 USD' },
-        { label: 'Unteres Band (-2.5σ)', value: '$62,150 USD' },
+        { label: 'Baseline Mittelwert', value: usd(baseline), isHighlighted: true },
+        { label: 'Oberes Band (+2.5σ)', value: usd(baseline * 1.033) },
+        { label: 'Unteres Band (-2.5σ)', value: usd(baseline * 0.967) },
         { label: 'Gaußscher Kernel', value: 'N(μ, σ²) Satisfied' },
       ],
       invariants: ['Ortswahrscheinlichkeitsdichte im Hilbert-Raum', 'Mean-Reversion Attraktor P*'],

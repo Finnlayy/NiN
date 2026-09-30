@@ -40,7 +40,7 @@ interface TimeSeriesDataPoint {
 export default function GravitationTelemetryGraph({
   gravityField,
   viaNegativa,
-  spotPrice = getLiveSpot('BTC', 64280),
+  spotPrice = getLiveSpot('BTC'),
   onLogEvent,
   className = ''
 }: GravitationTelemetryGraphProps) {

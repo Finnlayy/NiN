@@ -630,7 +630,7 @@ export function verifyOmegaAxioms(
       : 'KRITISCHE VERLETZUNG: Unbesicherte Position! Jeder Trade ohne persistierten Börsen-Stop ist durch Axiom 5 strengstens untersagt.',
     remediation: hasExchangeStop
       ? 'Keine Korrektur erforderlich.'
-      : 'Börsenseitigen OCO Stop-Loss Parameter eintragen (z. B. $63,850).',
+      : 'Börsenseitigen OCO Stop-Loss Parameter eintragen (unter dem aktuellen Spot).',
   });
 
   // Axiom 6 (Ecosystem Fidelity & Resonanz): Altcoins werden nur gegen ihren echten L1-Taktgeber korreliert
@@ -719,7 +719,7 @@ export function getEcosystemMetaRotation(): EcosystemLeader[] {
     priceUSD: number;
     change24h: number;
   }> = [
-    { symbol: 'BTC', name: 'Bitcoin Sovereign', cluster: 'BTC', leadAsset: 'BTC (GLOBAL MACRO)', r: 1.0, beta: 1.0, rvol: 2.8, cosPhi: 0.89, priceUSD: getLiveSpot('BTC', 64280.0), change24h: 3.8 },
+    { symbol: 'BTC', name: 'Bitcoin Sovereign', cluster: 'BTC', leadAsset: 'BTC (GLOBAL MACRO)', r: 1.0, beta: 1.0, rvol: 2.8, cosPhi: 0.89, priceUSD: getLiveSpot('BTC'), change24h: 3.8 },
     { symbol: 'ETH', name: 'Ethereum Lead-Lag', cluster: 'ETH', leadAsset: 'ETH / BTC', r: 0.94, beta: 1.45, rvol: 2.2, cosPhi: 0.84, priceUSD: getLiveSpot('ETH', 2780.0), change24h: 4.2 },
     { symbol: 'SOL', name: 'Solana High-Beta', cluster: 'SOL', leadAsset: 'SOL (SELF)', r: 0.92, beta: 2.85, rvol: 3.9, cosPhi: 0.91, priceUSD: getLiveSpot('SOL', 182.4), change24h: 8.5 },
     { symbol: 'SUI', name: 'Sui Quantum Vector', cluster: 'SUI', leadAsset: 'SUI (SELF)', r: 0.96, beta: 3.20, rvol: 4.8, cosPhi: 0.95, priceUSD: getLiveSpot('SUI', 3.42), change24h: 14.8 },
@@ -787,7 +787,7 @@ export function getLiveOmegaTelemetry(): {
   ecosystemLeaders: EcosystemLeader[];
   vault: DualStateVault;
 } {
-  const spotPrice = getLiveSpot('BTC', 64280.50);
+  const spotPrice = getLiveSpot('BTC');
   const atr14 = 420.0;
 
   const viaNegativa = calculateViaNegativa(spotPrice, atr14, 60, 30, 30);
@@ -912,7 +912,7 @@ export function getGPMIncubationCandidates(deltaTMinutes: number = 30): GPMCandi
       cluster: 'BTC',
       baseRealized: 890.0,
       baseUnrealized: 160.0,
-      spotPrice: getLiveSpot('BTC', 64280.0),
+      spotPrice: getLiveSpot('BTC'),
       baseTrades: 24,
       winRate: 66.7,
       maxDrawdown: -410.0,
