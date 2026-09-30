@@ -32,9 +32,9 @@ export default function OmegaCockpit({ isOpen, onClose, onLogEvent }: OmegaCockp
   const [autonomyLevel, setAutonomyLevel] = useState<'L4_HITL' | 'L5_AUTONOMOUS'>('L4_HITL');
   const [activeTab, setActiveTab] = useState<'OVERVIEW' | 'AXIOMS' | 'QUANTUM' | 'ROTATION' | 'VAULT'>('OVERVIEW');
   const [clusterExitDone, setClusterExitDone] = useState(false);
-  const [evalPrice, setEvalPrice] = useState('64250');
+  const [evalPrice, setEvalPrice] = useState(() => String(Math.round(getLiveSpot('BTC'))));
   const [evalDirection, setEvalDirection] = useState<'LONG' | 'SHORT'>('LONG');
-  const [evalStopPrice, setEvalStopPrice] = useState('63850');
+  const [evalStopPrice, setEvalStopPrice] = useState(() => String(Math.round(getLiveSpot('BTC') - 420 * 1.2)));
   const [axiomReport, setAxiomReport] = useState<AxiomVerificationResult[]>([]);
 
   // Periodic telemetry refresh
@@ -60,8 +60,8 @@ export default function OmegaCockpit({ isOpen, onClose, onLogEvent }: OmegaCockp
   }, [evalPrice, evalDirection, evalStopPrice]);
 
   const runAxiomCheck = useCallback(() => {
-    const targetPrice = parseFloat(evalPrice) || getLiveSpot('BTC', 64280);
-    const stopPrice = parseFloat(evalStopPrice) || 63850;
+    const targetPrice = parseFloat(evalPrice) || getLiveSpot('BTC');
+    const stopPrice = parseFloat(evalStopPrice) || Number((getLiveSpot('BTC') - 420 * 1.2).toFixed(2));
 
     const report = verifyOmegaAxioms(
       {

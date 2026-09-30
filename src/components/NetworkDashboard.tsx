@@ -498,7 +498,7 @@ type LogEntry = {
 const MOCK_EVENTS = [
   { msg: "Ingesting FIX protocol tick data...", type: "info" as const, node: "Kraken Feed" },
   { msg: "[OMEGA §4] cos φ = 0.89. High-efficiency active breakout confirmed.", type: "success" as const, node: "Quantum Core" },
-  { msg: "[OMEGA §2] -∇V_total vector pulling towards P* equilibrium ($64,730).", type: "info" as const, node: "Gravity Engine" },
+  { msg: "", type: "info" as const, node: "Gravity Engine" },
   { msg: "[VIA NEGATIVA §3] 99.9% Quantile bounds verified. Forbidden zone clearance 100%.", type: "info" as const, node: "Via Negativa" },
   { msg: "[OMEGA §5] Anti-Martingale: Trailing stop above entry. Free-Roll active ($0.00 risk).", type: "success" as const, node: "Anti-Martingale" },
   { msg: "[THE JUDGE §14] M8-Gate: Axioms 1-6 evaluated with 100% mathematical integrity.", type: "success" as const, node: "The Judge (M8)" },
@@ -509,12 +509,18 @@ const MOCK_EVENTS = [
   { msg: "Celery worker [swarm-node-7] heartbeat received. Latency: 1.2ms.", type: "info" as const, node: "Swarm Limbs" },
 ];
 
+function gravityEquilibriumMessage(): string {
+  const pStar = getLiveOmegaTelemetry().gravityField.potentialMinimumPrice;
+  const formatted = pStar.toLocaleString('en-US', { maximumFractionDigits: 0 });
+  return `[OMEGA §2] -∇V_total vector pulling towards P* equilibrium ($${formatted}).`;
+}
+
 function generateRandomLog(): LogEntry {
   const event = MOCK_EVENTS[Math.floor(Math.random() * MOCK_EVENTS.length)];
   return {
     id: Math.random().toString(36).slice(2),
     timestamp: new Date(),
-    message: event.msg,
+    message: event.node === 'Gravity Engine' ? gravityEquilibriumMessage() : event.msg,
     level: event.type,
     node: event.node
   };
