@@ -3,6 +3,7 @@ import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { getLivePrices } from './prices';
+import { getJson, setJson } from './stateStore';
 import type { KrakenOrderExecutor } from './kraken';
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
@@ -31,7 +32,15 @@ const DCA_CONFIG = [
   { limb: 5 as const, asset: 'SOL' as const, pair: 'SOLUSD', amountUSD: 75, dipThresholdPct: -2.5 },
 ];
 
-function loadDcaReferences(): Record<string, number> {
+/**
+ * Dip references, durably: the durable store wins (survives redeploys), the
+ * local file is the fallback for un-provisioned deploys and local dev.
+ */
+async function loadDcaReferences(): Promise<Record<string, number>> {
+  const stored = await getJson<Record<string, number>>('nin:dca:references');
+  if (stored && typeof stored === 'object' && Object.keys(stored).length > 0) {
+    return stored;
+  }
   try {
     if (existsSync(DCA_REFERENCE_FILE)) {
       return JSON.parse(readFileSync(DCA_REFERENCE_FILE, 'utf-8'));
@@ -42,14 +51,52 @@ function loadDcaReferences(): Record<string, number> {
   return {};
 }
 
+/** Persist references both locally and durably; both writes best-effort. */
+function saveDcaReferences(references: Record<string, number>): void {
+  try {
+    writeFileSync(DCA_REFERENCE_FILE, JSON.stringify(references), 'utf-8');
+  } catch {
+    /* /tmp write failure is non-fatal; next run re-baselines */
+  }
+  setJson('nin:dca:references', references);
+}
+
 /**
  * Read-only dip status for alerting: reports each configured asset's live
  * price, stored reference and distance to the buy trigger — WITHOUT placing
  * orders or touching the references. Poll-friendly.
+ *
+ * Prices come from the Kraken stream (the same venue the orders execute on,
+ * and the same source the references were baselined from); CoinGecko only
+ * covers an asset if the Kraken ticker is unreachable.
  */
-export async function getDcaDipStatus(): Promise<Record<string, unknown>> {
-  const references = loadDcaReferences();
-  const { prices, source } = await getLivePrices();
+export async function getDcaDipStatus(executor?: KrakenOrderExecutor): Promise<Record<string, unknown>> {
+  const references = await loadDcaReferences();
+  let prices: Record<string, number>;
+  let source: string;
+  if (executor) {
+    const kraken = await executor.getSymbolTickers();
+    prices = { ...kraken.prices };
+    const missing = DCA_CONFIG.filter((cfg) => typeof prices[cfg.asset] !== 'number');
+    source = missing.length === 0 ? 'kraken' : 'kraken+coingecko-fallback';
+    if (missing.length > 0) {
+      try {
+        const cg = await getLivePrices();
+        for (const cfg of missing) {
+          const value = cg.prices[cfg.asset];
+          if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+            prices[cfg.asset] = value;
+          }
+        }
+      } catch {
+        /* keep whatever Kraken returned */
+      }
+    }
+  } else {
+    const cg = await getLivePrices();
+    prices = cg.prices;
+    source = cg.source;
+  }
   const assets = DCA_CONFIG.map((cfg) => {
     const last = prices[cfg.asset] ?? null;
     const reference = references[cfg.asset] ?? null;
@@ -89,7 +136,7 @@ export async function runAutoDcaWorker(res: ServerResponse, executor: KrakenOrde
     return;
   }
 
-  const references = loadDcaReferences();
+  const references = await loadDcaReferences();
   const results: Array<Record<string, unknown>> = [];
 
   for (const cfg of DCA_CONFIG) {
@@ -126,11 +173,7 @@ export async function runAutoDcaWorker(res: ServerResponse, executor: KrakenOrde
     }
   }
 
-  try {
-    writeFileSync(DCA_REFERENCE_FILE, JSON.stringify(references), 'utf-8');
-  } catch {
-    /* /tmp write failure is non-fatal; next run re-baselines */
-  }
+  saveDcaReferences(references);
 
   sendJson(res, 200, { ran: true, armed: true, results, checkedAt: new Date().toISOString() });
 }

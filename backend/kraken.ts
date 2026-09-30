@@ -1,8 +1,10 @@
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import zlib from 'zlib';
+import { getJson, setJson, isDurableStoreEnabled } from './stateStore';
 
 const execFileAsync = promisify(execFile);
 
@@ -263,6 +265,9 @@ function limb(name: string, pair: string, mode: string, online: boolean, interva
 export class KrakenOrderExecutor {
   private cliPath: string | null;
   private recentOrdersList: KrakenRecentOrder[] = [];
+  // One-shot hydration flag: set BEFORE the KV read so a slow/failed read is
+  // never retried on every status call.
+  private ordersHydrated = false;
   private cliVersion: string | null = null;
   private preparing: Promise<string | null> | null = null;
   // One Kraken paper workspace per bot/limb (key = workspace name) so each
@@ -411,6 +416,9 @@ export class KrakenOrderExecutor {
    * Live status from the Kraken CLI. connected is true only after `kraken status` reports online.
    */
   async getExecutionStatus(): Promise<Record<string, unknown>> {
+    // Adopt the durable order history on cold start (fresh instance / after a
+    // deploy wiped /tmp). Lazy + memoized: costs one KV read per instance.
+    await this.hydrateRecentOrders();
     await this.ensureCli();
     if (!this.hasNativeCli() || !this.cliPath) {
       return this.disconnected(
@@ -419,15 +427,31 @@ export class KrakenOrderExecutor {
     }
 
     const started = Date.now();
-    const [versionRun, statusRun, tickerRun, paper] = await Promise.all([
+    const [versionRun, statusRun, tickerRun, paper, balanceRun] = await Promise.all([
       this.cliVersion ? Promise.resolve(null) : this.runCli(['--version']),
       this.runCli(['status', '-o', 'json']),
       this.runCli(['ticker', 'BTCUSD', 'SOLUSD', '-o', 'json']),
       // Per-bot paper ledger balances — each workspace is created on first
       // contact; failures degrade to available:false and never fail status.
       this.paperLedgerStatus(),
+      // Real-account balance (no KRAKEN_WORKSPACE) so callers can tell
+      // whether the next fill will be real or paper. Never fails status.
+      this.runCli(['balance', '-o', 'json']),
     ]);
     const latencyMs = Date.now() - started;
+
+    let realBalance: Record<string, unknown>;
+    if (balanceRun.ok) {
+      let parsed: unknown = null;
+      try {
+        parsed = parseJson(balanceRun.stdout);
+      } catch {
+        parsed = null;
+      }
+      realBalance = { available: true, balances: parsed };
+    } else {
+      realBalance = { available: false };
+    }
 
     if (versionRun?.ok) {
       this.cliVersion = versionRun.stdout.trim() || this.cliVersion;
@@ -500,6 +524,8 @@ export class KrakenOrderExecutor {
       system,
       ticker,
       paper,
+      realBalance,
+      durableState: isDurableStoreEnabled(),
       limbs: {
         limb_1: limb('Swarm Limb 1 (Scout Node)', 'BTCUSD', 'Trigger Scout Tranche', true),
         limb_2: limb('Swarm Limb 2 (Pyramid Node)', 'BTCUSD', 'ATR Trailing Tranches', true),
@@ -515,10 +541,163 @@ export class KrakenOrderExecutor {
     return this.recentOrdersList.slice();
   }
 
+  /**
+   * Live last-trade prices straight from the Kraken ticker stream for every
+   * dashboard symbol Kraken lists. Symbols Kraken does not list are simply
+   * absent from the map, so the caller can fall back to another feed for
+   * those. This is the SAME stream the Kraken terminal panel shows, which
+   * keeps every panel quoting the identical venue price.
+   */
+  async getSymbolTickers(): Promise<{ source: string; prices: Record<string, number> }> {
+    const SYMBOL_PAIR_HINTS: Record<string, string[]> = {
+      BTC: ['XXBTZUSD', 'XBTUSD', 'BTCUSD'],
+      ETH: ['XETHZUSD', 'ETHUSD'],
+      SOL: ['SOLUSD'],
+      SUI: ['SUIUSD'],
+      DOGE: ['XDGUSD', 'DOGEUSD'],
+      XRP: ['XXRPZUSD', 'XRPUSD'],
+      AVAX: ['AVAXUSD'],
+    };
+    const prices: Record<string, number> = {};
+    await this.ensureCli();
+    if (!this.hasNativeCli() || !this.cliPath) {
+      return { source: 'kraken', prices };
+    }
+    const pairs = [...new Set(Object.values(SYMBOL_PAIR_HINTS).flat())];
+    const run = await this.runCli(['ticker', ...pairs, '-o', 'json']);
+    if (!run.ok) {
+      return { source: 'kraken', prices };
+    }
+    let parsed: unknown;
+    try {
+      parsed = parseJson(run.stdout);
+    } catch {
+      return { source: 'kraken', prices };
+    }
+    for (const [symbol, hints] of Object.entries(SYMBOL_PAIR_HINTS)) {
+      for (const hint of hints) {
+        const value =
+          parsed && typeof parsed === 'object'
+            ? (parsed as Record<string, unknown>)[hint]
+            : undefined;
+        const quote = value && typeof value === 'object' ? (value as Record<string, unknown>) : null;
+        const last = priceOf(quote);
+        if (last) {
+          prices[symbol] = last;
+          break;
+        }
+      }
+    }
+    return { source: 'kraken', prices };
+  }
+
   private recordOrder(entry: KrakenRecentOrder): void {
     this.recentOrdersList.unshift(entry);
     if (this.recentOrdersList.length > 25) {
       this.recentOrdersList.length = 25;
+    }
+    // Durable copy so the history survives redeploys / instance rotation.
+    setJson('nin:recentOrders', this.recentOrdersList);
+  }
+
+  /**
+   * Adopt the durable order history from the state store once per instance.
+   * Skipped when the local list already holds entries (warm instance) and
+   * silently no-ops without a configured store.
+   */
+  private async hydrateRecentOrders(): Promise<void> {
+    if (this.ordersHydrated) {
+      return;
+    }
+    this.ordersHydrated = true;
+    if (this.recentOrdersList.length > 0) {
+      return;
+    }
+    const stored = await getJson<KrakenRecentOrder[]>('nin:recentOrders');
+    if (Array.isArray(stored) && stored.length > 0) {
+      this.recentOrdersList = stored.filter((e) => e && typeof e === 'object').slice(0, 25);
+    }
+  }
+
+  /**
+   * On-disk directory of a named Kraken paper workspace. Mirrors the CLI's
+   * layout: `<config-dir>/kraken/workspaces/<name>/` where the CLI's config
+   * dir is `$XDG_CONFIG_HOME` or `$HOME/.config` (HOME=/tmp on Vercel).
+   */
+  private paperWorkspaceDir(workspace: string): string {
+    const home = process.env.VERCEL === '1' ? '/tmp' : process.env.HOME || os.homedir();
+    const candidates = [
+      path.join(home, '.config', 'kraken', 'workspaces', workspace),
+      ...(process.env.XDG_CONFIG_HOME
+        ? [path.join(process.env.XDG_CONFIG_HOME, 'kraken', 'workspaces', workspace)]
+        : []),
+    ];
+    for (const dir of candidates) {
+      if (fs.existsSync(dir)) {
+        return dir;
+      }
+    }
+    return candidates[0];
+  }
+
+  /**
+   * Snapshot every file of a paper workspace (workspace.json, journal.jsonl,
+   * decisions.jsonl, …) into the durable store. Whole-directory, so future CLI
+   * format additions are backed up without code changes. Best-effort.
+   */
+  private backupPaperWorkspace(workspace: string): void {
+    try {
+      const dir = this.paperWorkspaceDir(workspace);
+      if (!fs.existsSync(dir)) {
+        return;
+      }
+      const files: Record<string, string> = {};
+      for (const name of fs.readdirSync(dir)) {
+        const full = path.join(dir, name);
+        if (!fs.statSync(full).isFile()) {
+          continue;
+        }
+        files[name] = fs.readFileSync(full).toString('base64');
+      }
+      setJson(`nin:paperws:${workspace}`, {
+        v: 1,
+        savedAt: new Date().toISOString(),
+        files,
+      });
+    } catch {
+      /* durable backup must never break the trading path */
+    }
+  }
+
+  /**
+   * Rebuild a paper workspace's files from the durable snapshot after a
+   * deploy wiped /tmp. Runs BEFORE `workspace create` so the CLI re-attaches
+   * to the restored journal (create then fails with "already exists", which
+   * the caller already tolerates). Never touches an existing local directory.
+   */
+  private async restorePaperWorkspace(workspace: string): Promise<boolean> {
+    try {
+      const dir = this.paperWorkspaceDir(workspace);
+      if (fs.existsSync(dir)) {
+        return false;
+      }
+      const backup = await getJson<{ v?: number; savedAt?: string; files?: Record<string, string> }>(
+        `nin:paperws:${workspace}`
+      );
+      const files = backup?.files;
+      if (!files || typeof files !== 'object') {
+        return false;
+      }
+      fs.mkdirSync(dir, { recursive: true });
+      for (const [name, encoded] of Object.entries(files)) {
+        if (typeof encoded !== 'string' || !encoded) {
+          continue;
+        }
+        fs.writeFileSync(path.join(dir, name), Buffer.from(encoded, 'base64'));
+      }
+      return true;
+    } catch {
+      return false;
     }
   }
 
@@ -536,6 +715,10 @@ export class KrakenOrderExecutor {
         if (!this.hasNativeCli()) {
           return false;
         }
+        // Fresh instance after a deploy: /tmp is empty but a durable snapshot
+        // may exist — restore the journal BEFORE create so the CLI re-attaches
+        // to the old ledger instead of minting a fresh $10k one.
+        await this.restorePaperWorkspace(workspace);
         const create = await this.runCli([
           'workspace',
           'create',
@@ -553,6 +736,9 @@ export class KrakenOrderExecutor {
           this.paperWorkspaces.delete(workspace);
           return false;
         }
+        // Snapshot the (possibly restored) journal so the next cold start can
+        // rebuild it even if this instance never fills another order.
+        this.backupPaperWorkspace(workspace);
         return true;
       })();
       this.paperWorkspaces.set(workspace, ready);
@@ -688,6 +874,8 @@ export class KrakenOrderExecutor {
       venue: 'Kraken Paper',
       workspace,
     });
+    // Durable journal backup — a redeploy must not reset this ledger.
+    this.backupPaperWorkspace(workspace);
 
     return {
       success: true,

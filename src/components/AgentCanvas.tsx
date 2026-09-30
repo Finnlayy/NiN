@@ -752,6 +752,69 @@ export default function AgentCanvas() {
                   )}
                 </div>
 
+                {/* Per-bot Paper Ledger Balances */}
+                <div className="space-y-1.5">
+                  <div className="text-[10px] text-slate-400 uppercase font-bold tracking-wider">
+                    Paper Ledgers (per-bot, virtual $10k each)
+                  </div>
+                  <div className="bg-[#0a0c10] border border-amber-500/20 p-2.5 rounded-lg text-[10px] flex flex-col gap-1">
+                    {(() => {
+                      const workspaces: Record<string, any> = executionTelemetry?.paper?.workspaces ?? {};
+                      const realUsd = Number(executionTelemetry?.realBalance?.balances?.USD ?? 0);
+                      const rows = Object.entries(workspaces);
+                      if (rows.length === 0) {
+                        return <span className="text-slate-500 italic">No paper ledgers initialized yet.</span>;
+                      }
+                      return rows.map(([name, info]) => {
+                        const nested = info?.balances?.balances?.USD;
+                        const usdRaw = nested?.total ?? nested ?? info?.balances?.balances?.USD;
+                        const usd = usdRaw !== undefined && usdRaw !== null ? Number(usdRaw) : null;
+                        const short = name.replace(/^nin-paper-/, '').replace(/^limb-/, 'Limb ');
+                        const isDcaLimb = /^nin-paper-limb-[45]$/.test(name);
+                        const need = name.endsWith('-4') ? 150 : 75;
+                        const fillsPaper = isDcaLimb && realUsd < need;
+                        return (
+                          <div key={name} className="flex justify-between items-center text-slate-300">
+                            <span className="text-amber-300/90 font-bold">{short}</span>
+                            <span className="flex items-center gap-1.5">
+                              {usd !== null && Number.isFinite(usd) ? (
+                                <span className={usd < 10000 ? 'text-amber-300' : 'text-slate-400'}>
+                                  ${usd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                </span>
+                              ) : (
+                                <span className="text-slate-600">{info?.available ? '—' : 'offline'}</span>
+                              )}
+                              {isDcaLimb && (
+                                <span
+                                  className={`text-[8px] font-bold px-1 rounded border ${
+                                    fillsPaper
+                                      ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                                      : 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                                  }`}
+                                  title={fillsPaper
+                                    ? 'Real account underfunded — this bot fills on its paper ledger'
+                                    : 'Real funds available — this bot fills on Kraken Pro'}
+                                >
+                                  {fillsPaper ? 'PAPER' : 'REAL'}
+                                </span>
+                              )}
+                            </span>
+                          </div>
+                        );
+                      });
+                    })()}
+                    <div className="flex justify-between items-center border-t border-slate-900 pt-1 text-slate-500">
+                      <span>Real account USD</span>
+                      <span>
+                        ${Number(executionTelemetry?.realBalance?.balances?.USD ?? 0).toLocaleString('en-US', {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 4,
+                        })}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
                 {/* Recent Execution Order History */}
                 <div className="space-y-1.5">
                   <div className="text-[10px] text-slate-400 uppercase font-bold tracking-wider flex items-center justify-between">

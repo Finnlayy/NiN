@@ -5,7 +5,6 @@ import {
   Eye, 
   EyeOff, 
   RotateCcw, 
-  Sliders, 
   Layers,
   ArrowUpRight,
   ArrowDownRight,
@@ -221,16 +220,6 @@ export default function GravitationTelemetryGraph({
 
   const handleMouseLeave = () => {
     setHoveredPoint(null);
-  };
-
-  // Preset scenarios
-  const applyPreset = (name: string, l2: number, ice: number, poly: number) => {
-    setL2Depth(l2);
-    setIcebergDepth(ice);
-    setPolyProb(poly);
-    if (onLogEvent) {
-      onLogEvent(`Gravitation Field preset engaged: ${name} (L2: ${l2}, Ice: ${ice}, Poly: ${poly * 100}%)`, 'info', 'Gravitation Telemetry');
-    }
   };
 
   const resetToLive = () => {
@@ -884,111 +873,6 @@ export default function GravitationTelemetryGraph({
             <span>F &gt; 0: Bullischer Zug nach oben</span>
             <span>•</span>
             <span>F &lt; 0: Bärischer Zug nach unten</span>
-          </div>
-        </div>
-      </div>
-
-      {/* Physics Simulation Control Sliders & Scenario Presets */}
-      <div className="mt-5 pt-4 border-t border-slate-700/60 font-mono text-xs space-y-4">
-        <div className="flex items-center justify-between flex-wrap gap-2">
-          <div className="flex items-center gap-2 text-white font-bold">
-            <Sliders className="w-4 h-4 text-cyan-400" />
-            <span>KRAFT-PARAMETER &amp; ORDERFLOW-SIMULATION</span>
-          </div>
-
-          {/* Quick Scenario Presets */}
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <span className="text-[11px] text-slate-400 mr-1">Szenarien:</span>
-            <button
-              onClick={() => applyPreset('Bullish Squeeze', 2600, 3100, 0.92)}
-              className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-cyan-300 text-[11px] transition-colors border border-slate-700"
-            >
-              Bull Squeeze
-            </button>
-            <button
-              onClick={() => applyPreset('Dark Pool Absorption', 1200, 4200, 0.70)}
-              className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-purple-300 text-[11px] transition-colors border border-slate-700"
-            >
-              Iceberg Wall
-            </button>
-            <button
-              onClick={() => applyPreset('Polymarket Shock', 1300, 1900, 0.35)}
-              className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-amber-300 text-[11px] transition-colors border border-slate-700"
-            >
-              Event Reversal
-            </button>
-            <button
-              onClick={() => applyPreset('Gleichgewicht', 1400, 2000, 0.50)}
-              className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-emerald-300 text-[11px] transition-colors border border-slate-700"
-            >
-              Equilibrium
-            </button>
-          </div>
-        </div>
-
-        {/* 3 Parameter Sliders */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 bg-[#0c101a] p-3.5 rounded-xl border border-slate-800/80">
-          {/* Slider 1: L2 Imbalance */}
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between text-slate-300 text-[11px]">
-              <span className="text-cyan-400 font-semibold">1. Sichtbare L2-Tiefe (Bids vs Asks)</span>
-              <span className="font-bold text-white">{l2Depth.toLocaleString()} BTC</span>
-            </div>
-            <input
-              type="range"
-              min={600}
-              max={2800}
-              step={50}
-              value={l2Depth}
-              onChange={(e) => setL2Depth(Number(e.target.value))}
-              className="w-full h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-cyan-400"
-            />
-            <div className="flex justify-between text-[10px] text-slate-500">
-              <span>Asks Dominanz</span>
-              <span>Bids Dominanz</span>
-            </div>
-          </div>
-
-          {/* Slider 2: Iceberg Shadow Volume */}
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between text-slate-300 text-[11px]">
-              <span className="text-purple-400 font-semibold">2. Schattenbuch-Tiefe (Icebergs)</span>
-              <span className="font-bold text-white">{icebergDepth.toLocaleString()} BTC</span>
-            </div>
-            <input
-              type="range"
-              min={1000}
-              max={4500}
-              step={50}
-              value={icebergDepth}
-              onChange={(e) => setIcebergDepth(Number(e.target.value))}
-              className="w-full h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-purple-400"
-            />
-            <div className="flex justify-between text-[10px] text-slate-500">
-              <span>Dünne Schatten</span>
-              <span>Starke Absorption</span>
-            </div>
-          </div>
-
-          {/* Slider 3: Polymarket Probability */}
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between text-slate-300 text-[11px]">
-              <span className="text-amber-400 font-semibold">3. Polymarket Forward-Erwartung</span>
-              <span className="font-bold text-white">{(polyProb * 100).toFixed(0)}% Up</span>
-            </div>
-            <input
-              type="range"
-              min={0.10}
-              max={0.95}
-              step={0.01}
-              value={polyProb}
-              onChange={(e) => setPolyProb(Number(e.target.value))}
-              className="w-full h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-amber-400"
-            />
-            <div className="flex justify-between text-[10px] text-slate-500">
-              <span>10% Bearish</span>
-              <span>95% Bullish</span>
-            </div>
           </div>
         </div>
       </div>
