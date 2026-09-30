@@ -1,0 +1,4 @@
+# Models pulled by scripts/stack-start.sh and served at http://127.0.0.1:11434
+# The first entry is the default local model for the OpenAI-compatible provider.
+qwen2.5-coder:3b
+llama3.2:3b

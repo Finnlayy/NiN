@@ -52,7 +52,7 @@ export default function NeuralKonsole() {
 
   // Multi-Provider state
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
-  const [activeProviderId, setActiveProviderId] = useState<AIProviderId>('gemini');
+  const [activeProviderId, setActiveProviderId] = useState<AIProviderId>('lm_studio');
   const [isConfigOpen, setIsConfigOpen] = useState(false);
   const [isSwitchingProvider, setIsSwitchingProvider] = useState(false);
   const [testResult, setTestResult] = useState<{ providerId: AIProviderId; ok: boolean; message: string } | null>(null);
@@ -72,7 +72,7 @@ export default function NeuralKonsole() {
       if (res.ok) {
         const data = await res.json();
         setProviders(data.providers || []);
-        setActiveProviderId(data.activeProvider || 'gemini');
+        setActiveProviderId(data.activeProvider || 'lm_studio');
 
         const lm = (data.providers || []).find((p: ProviderInfo) => p.id === 'lm_studio');
         if (lm) {
@@ -266,9 +266,9 @@ export default function NeuralKonsole() {
   };
 
   const activeProvider = providers.find(p => p.id === activeProviderId) || {
-    id: 'gemini',
-    name: 'Google Gemini (Cloud)',
-    model: 'antigravity-preview-05-2026',
+    id: 'lm_studio',
+    name: 'LM Studio (Local Server)',
+    model: 'local-model',
   };
 
   return (
