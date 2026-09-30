@@ -12,8 +12,8 @@ export class LMStudioCoreAdapter implements NeuralCoreAdapter {
   private timeoutMs: number;
 
   constructor(config?: Partial<LMStudioConfig>) {
-    this.baseUrl = (config?.baseUrl || process.env.LM_STUDIO_BASE_URL || 'http://127.0.0.1:11434/v1').replace(/\/+$/, '');
-    this.model = config?.model || process.env.LM_STUDIO_MODEL || 'qwen2.5-coder:3b';
+    this.baseUrl = (config?.baseUrl || process.env.LM_STUDIO_BASE_URL || 'http://localhost:1234/v1').replace(/\/+$/, '');
+    this.model = config?.model || process.env.LM_STUDIO_MODEL || 'local-model';
     this.timeoutMs = config?.timeoutMs || 60000;
   }
 

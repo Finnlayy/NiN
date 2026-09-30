@@ -52,15 +52,15 @@ export default function NeuralKonsole() {
 
   // Multi-Provider state
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
-  const [activeProviderId, setActiveProviderId] = useState<AIProviderId>('gemini');
+  const [activeProviderId, setActiveProviderId] = useState<AIProviderId>('lm_studio');
   const [isConfigOpen, setIsConfigOpen] = useState(false);
   const [isSwitchingProvider, setIsSwitchingProvider] = useState(false);
   const [testResult, setTestResult] = useState<{ providerId: AIProviderId; ok: boolean; message: string } | null>(null);
   const [isTesting, setIsTesting] = useState(false);
 
   // Editable config state
-  const [lmBaseUrl, setLmBaseUrl] = useState('http://127.0.0.1:11434/v1');
-  const [lmModel, setLmModel] = useState('qwen2.5-coder:3b');
+  const [lmBaseUrl, setLmBaseUrl] = useState('http://localhost:1234/v1');
+  const [lmModel, setLmModel] = useState('local-model');
   const [oneProviderUrl, setOneProviderUrl] = useState('https://api.oneprovider.dev');
   const [oneProviderKey, setOneProviderKey] = useState('');
   const [oneProviderModel, setOneProviderModel] = useState('claude-sonnet-4-6');
@@ -72,7 +72,7 @@ export default function NeuralKonsole() {
       if (res.ok) {
         const data = await res.json();
         setProviders(data.providers || []);
-        setActiveProviderId(data.activeProvider || 'gemini');
+        setActiveProviderId(data.activeProvider || 'lm_studio');
 
         const lm = (data.providers || []).find((p: ProviderInfo) => p.id === 'lm_studio');
         if (lm) {
@@ -266,9 +266,9 @@ export default function NeuralKonsole() {
   };
 
   const activeProvider = providers.find(p => p.id === activeProviderId) || {
-    id: 'gemini',
-    name: 'Google Gemini (Cloud)',
-    model: 'antigravity-preview-05-2026',
+    id: 'lm_studio',
+    name: 'LM Studio (Local Server)',
+    model: 'local-model',
   };
 
   return (
@@ -399,7 +399,7 @@ export default function NeuralKonsole() {
                 </span>
               </div>
               <p className="text-[11px] text-slate-400">
-                Connects to the local Ollama server. Start NiN pulls the local models and serves them on port 11434.
+                Connects to your local machine (LM Studio Local Server). Start the server in LM Studio on port 1234.
               </p>
 
               <div className="space-y-1.5">
@@ -408,7 +408,7 @@ export default function NeuralKonsole() {
                   type="text"
                   value={lmBaseUrl}
                   onChange={e => setLmBaseUrl(e.target.value)}
-                  placeholder="http://127.0.0.1:11434/v1"
+                  placeholder="http://localhost:1234/v1"
                   className="w-full bg-[#05070a] border border-slate-700 text-slate-200 rounded px-2.5 py-1.5 text-xs outline-none focus:border-emerald-500"
                 />
               </div>
@@ -419,7 +419,7 @@ export default function NeuralKonsole() {
                   type="text"
                   value={lmModel}
                   onChange={e => setLmModel(e.target.value)}
-                  placeholder="qwen2.5-coder:3b"
+                  placeholder="local-model or qwen2.5-coder-32b"
                   className="w-full bg-[#05070a] border border-slate-700 text-slate-200 rounded px-2.5 py-1.5 text-xs outline-none focus:border-emerald-500"
                 />
               </div>

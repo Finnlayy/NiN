@@ -140,20 +140,6 @@ start_ollama() {
   echo $! > "$OLLAMA_PID_FILE"
 }
 
-default_ollama_model() {
-  local line
-  local manifest="$ROOT/config/ollama-models.txt"
-  [[ -f "$manifest" ]] || return 0
-  while read -r line || [[ -n "$line" ]]; do
-    line="${line%%#*}"
-    line="${line#"${line%%[![:space:]]*}"}"
-    line="${line%"${line##*[![:space:]]}"}"
-    [[ -z "$line" ]] && continue
-    printf '%s\n' "$line"
-    return 0
-  done < "$manifest"
-}
-
 ollama_model_present() {
   local model="$1"
   local name
@@ -355,8 +341,6 @@ main() {
   fi
   export OLLAMA_HOST="127.0.0.1:${OLLAMA_PORT}"
   ensure_ollama_models
-  export LM_STUDIO_BASE_URL="${LM_STUDIO_BASE_URL:-http://127.0.0.1:${OLLAMA_PORT}/v1}"
-  export LM_STUDIO_MODEL="${LM_STUDIO_MODEL:-$(default_ollama_model)}"
 
   if web_is_running; then
     echo "Web stack is already running on http://127.0.0.1:${WEB_PORT}"
