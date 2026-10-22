@@ -21,6 +21,7 @@ import { engineTelemetryHub } from './telemetryEngine';
 import { botRegistry } from './bots';
 import { handlePricesRequest } from './prices';
 import { fetchGitHubUser, rememberOidcHeader } from './connect';
+import { getExchangeClock } from './exchangeClock';
 
 const krakenExecutor = new KrakenOrderExecutor();
 
@@ -158,6 +159,12 @@ export async function handleRequest(req: IncomingMessage, res: ServerResponse): 
         'Access-Control-Allow-Headers': 'Content-Type',
       });
       res.end();
+      return true;
+    }
+
+    if (method === 'GET' && (url === '/api/exchange/clock' || url === '/api/exchange/clock/')) {
+      const clock = await getExchangeClock();
+      sendJson(res, 200, clock);
       return true;
     }
 

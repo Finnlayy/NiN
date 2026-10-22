@@ -8,3 +8,5 @@ data/vectors/trace.json
 .env.local
 .vercel/
 api/_build/
+
+data/learning/

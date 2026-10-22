@@ -8,6 +8,7 @@ import SentimentSidebar from "./SentimentSidebar";
 import OmegaCockpit from "./OmegaCockpit";
 import OmegaDashboard from "./OmegaDashboard";
 import GravitationTelemetryGraph from "./GravitationTelemetryGraph";
+import MultiHorizonAccuracyWidget from "../features/multiHorizon/MultiHorizonAccuracyWidget";
 import GravityFieldVisualizer from "./GravityFieldVisualizer";
 import SymbolAmpel from "./SymbolAmpel";
 import GPMIncubationArena from "./GPMIncubationArena";
@@ -394,6 +395,11 @@ export default function NetworkDashboard() {
               spotPrice={omegaTelemetry.viaNegativa.spotPrice}
               onLogEvent={addLog}
             />
+          </div>
+
+          {/* §2 Paragraph 2: Multi-Horizon Prediction Accuracy & Live BTC Tracking */}
+          <div className="mb-8">
+            <MultiHorizonAccuracyWidget onLogEvent={addLog} />
           </div>
           
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
