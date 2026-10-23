@@ -30,6 +30,7 @@ import { useMultiHorizonAccuracy, type LogFn } from '../../hooks/useMultiHorizon
 import {
   EVALUATION_HORIZONS,
   HORIZON_MS,
+  type M8EngineStatus,
   type VerdictSeverity,
 } from './types';
 import { HORIZON_COLORS, HorizonAccuracyChart, PriceTrackChart } from './HorizonCharts';
@@ -96,6 +97,7 @@ export default function MultiHorizonAccuracyWidget({
     clock,
     commitGate,
     showReplay,
+    history,
     livePrice,
     totalLiveSnapshots,
     totalReplaySnapshots,
@@ -153,7 +155,8 @@ export default function MultiHorizonAccuracyWidget({
   const lastTick = ticks.length > 0 ? ticks[ticks.length - 1] : null;
   const feedAgeMs = lastTick ? Math.max(0, clock.nowMs - lastTick.tsMs) : null;
   const graduation = summary.graduation;
-  const m8Status = latest?.m8EngineStatus ?? (commitGate?.allowed ? 'THROTTLED' : 'QUARANTINED');
+  const m8Status: M8EngineStatus | null =
+    latest?.m8EngineStatus ?? (commitGate ? (commitGate.allowed ? 'THROTTLED' : 'QUARANTINED') : null);
 
   return (
     <section
@@ -201,11 +204,30 @@ export default function MultiHorizonAccuracyWidget({
           </span>
           <span className="px-2.5 py-1 rounded-lg border border-slate-700 bg-slate-800/60 text-slate-300 flex items-center gap-1.5">
             <Radio className="w-3 h-3" />
-            M8: {m8Status}
+            M8: {m8Status ?? '—'}
           </span>
           <span className="px-2.5 py-1 rounded-lg border border-slate-700 bg-slate-800/60 text-slate-300 flex items-center gap-1.5">
             <Database className="w-3 h-3" />
             {totalLiveSnapshots} LIVE · {totalReplaySnapshots} REPLAY
+          </span>
+          <span
+            className={`px-2.5 py-1 rounded-lg border flex items-center gap-1.5 ${
+              history.authoritative
+                ? 'border-slate-700 bg-slate-800/60 text-slate-300'
+                : 'border-amber-500/40 bg-amber-500/10 text-amber-300'
+            }`}
+            title={
+              history.error ??
+              `Kraken OHLC 1-Minuten-Bars für die Feature-Berechnung${
+                history.fetchedAtMs
+                  ? ` (Alter ${Math.round((clock.nowMs - history.fetchedAtMs) / 1000)} s)`
+                  : ''
+              }`
+            }
+          >
+            <Layers className="w-3 h-3" />
+            {history.bars.length > 0 ? `${history.bars.length} Bars` : 'Bars: Warm-up'}
+            {history.authoritative ? ' · Kraken' : ''}
           </span>
         </div>
       </div>
@@ -339,10 +361,10 @@ export default function MultiHorizonAccuracyWidget({
                 </div>
               </div>
               <div>
-                <div className="text-slate-500 uppercase text-[9px]">Gewichtung k</div>
+                <div className="text-slate-500 uppercase text-[9px]">N_eff · OOS</div>
                 <div className="text-slate-100">
-                  {summary.best ? `${(summary.best.confidenceWeight * 100).toFixed(0)}%` : '—'} · N{' '}
-                  {summary.best?.samples ?? 0}
+                  {summary.best ? summary.best.effectiveSamples.toFixed(1) : '—'} ·{' '}
+                  {summary.best ? (summary.best.isOutOfSampleConsistent ? 'OK' : 'offen') : '—'}
                 </div>
               </div>
             </div>
@@ -370,7 +392,7 @@ export default function MultiHorizonAccuracyWidget({
                   <th className="text-right px-3 py-2 font-medium">Dir.</th>
                   <th className="text-right px-3 py-2 font-medium">MC</th>
                   <th className="text-right px-3 py-2 font-medium">Accuracy</th>
-                  <th className="text-right px-3 py-2 font-medium">N / w</th>
+                  <th className="text-right px-3 py-2 font-medium">N_eff / w</th>
                   <th className="text-right px-3 py-2 font-medium">Rang</th>
                 </tr>
               </thead>
@@ -442,7 +464,9 @@ export default function MultiHorizonAccuracyWidget({
                         {resolution ? `${resolution.accuracyPercent.toFixed(0)}%` : '—'}
                       </td>
                       <td className="px-3 py-2 text-right text-slate-400">
-                        {aggregate ? `${aggregate.samples} · ${(aggregate.confidenceWeight * 100).toFixed(0)}%` : '—'}
+                        {aggregate
+                          ? `${aggregate.effectiveSamples.toFixed(1)} · ${(aggregate.confidenceWeight * 100).toFixed(0)}%`
+                          : '—'}
                       </td>
                       <td className="px-3 py-2 text-right">
                         {aggregate && aggregate.samples > 0 ? (
@@ -561,7 +585,7 @@ export default function MultiHorizonAccuracyWidget({
             </div>
             <div className="grid grid-cols-3 gap-3 font-mono text-[10px]">
               <Metric
-                label="N"
+                label="N (LIVE)"
                 value={`${graduation.samples}`}
                 target={`≥${graduation.requiredSamples} · strikt ${GRADUATION_SAMPLES_STRICT}`}
                 ok={graduation.samples >= graduation.requiredSamples}
@@ -571,7 +595,11 @@ export default function MultiHorizonAccuracyWidget({
             </div>
             <p className="text-[10px] text-slate-500 mt-3 leading-relaxed">
               Auflösungen: {scopedResolutions.length} im aktiven Scope · {summary.pendingHorizons} offene
-              Slots · Kalibrierung T={calibration.temperatureT.toFixed(2)} / b={calibration.bias.toFixed(2)}.
+              Slots · Kalibrierung T={calibration.temperatureT.toFixed(2)} / b={calibration.bias.toFixed(2)}
+              {graduation.isGraduatedStrict ? ' · strikte Stufe erreicht' : ''}.
+              {summary.best
+                ? ` Bester Horizont: ${summary.best.coveragePercent.toFixed(0)}% der Ausgänge mit Bewegung (N_eff ${summary.best.effectiveSamples.toFixed(1)}).`
+                : ''}
             </p>
           </div>
 

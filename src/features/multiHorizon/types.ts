@@ -41,6 +41,8 @@ export interface FeatureSnapshot {
   cisd: number;
   bbWidthPercent: number;
   bbPosition: number;
+  /** Realised volatility in percent of price per minute (interval-corrected). */
+  sigmaPerMinutePercent: number;
   /** Number of price ticks the features were derived from. */
   sampleCount: number;
 }
@@ -164,7 +166,14 @@ export interface GovernanceEvent {
 
 export interface HorizonAggregate {
   horizonMinutes: HorizonMinutes;
+  /** Raw resolved slots (overlapping windows included). */
   samples: number;
+  /**
+   * Overlap-corrected sample count used for every confidence statement.
+   * Consecutive snapshots share up to horizon/stride minutes of price path, so
+   * raw counts overstate evidence by that factor.
+   */
+  effectiveSamples: number;
   wins: number;
   directionalAccuracyPercent: number;
   /** Wilson 95% lower bound — guards against a lucky small sample. */
@@ -172,6 +181,12 @@ export interface HorizonAggregate {
   magnitudeClosenessPercent: number;
   accuracyPercent: number;
   brierScore: number;
+  /** Share of resolutions whose realised move stayed inside the neutral band. */
+  neutralShare: number;
+  /** Resolutions with a realised move (denominator of the hit rate), in percent. */
+  coveragePercent: number;
+  /** Both chronological halves beat a coin flip (out-of-sample check). */
+  isOutOfSampleConsistent: boolean;
   confidenceWeight: number;
   rankedScore: number;
   rank: number;
@@ -187,7 +202,10 @@ export interface PaperGraduation {
   winRateTarget: number;
   profitFactor: number;
   profitFactorTarget: number;
+  /** N >= 20 with WR/PF targets met. */
   isGraduated: boolean;
+  /** N >= 30 (strict threshold) with WR/PF targets met. */
+  isGraduatedStrict: boolean;
 }
 
 export interface Verdict {

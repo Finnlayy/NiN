@@ -15,12 +15,18 @@ import {
   ACCURACY_DIRECTION_WEIGHT,
   ACCURACY_MAGNITUDE_WEIGHT,
   CONFIDENCE_K,
+  GRADUATION_SAMPLES_STRICT,
+  MC_TOLERANCE_SIGMA,
   GRADUATION_PROFIT_FACTOR,
   GRADUATION_SAMPLES,
   GRADUATION_WIN_RATE,
+  MAX_SIGMA_PER_MINUTE_PERCENT,
   MIN_SAMPLES_PROVISIONAL,
+  MIN_SIGMA_PER_MINUTE_PERCENT,
   MIN_TRADEABLE_RANK_SCORE,
-  NEUTRAL_BAND_PERCENT,
+  REFERENCE_SIGMA_PER_MINUTE_PERCENT,
+  NEUTRAL_BAND_FLOOR_PERCENT,
+  NEUTRAL_BAND_SIGMA,
 } from './config';
 import {
   EVALUATION_HORIZONS,
@@ -45,12 +51,15 @@ export const round = (value: number, digits = 2): number =>
   Number(value.toFixed(digits));
 
 /**
- * Volatility of one horizon in percent, derived from the snapshot's own ATR —
- * never from future data. It sets the tolerance band for the magnitude score.
+ * Volatility of one horizon in percent, derived from the snapshot's own
+ * interval-corrected realised volatility — never from future data. It sets the
+ * tolerance band for the magnitude score.
  */
 export function horizonSigmaPercent(snapshot: Paragraph2Snapshot, horizon: HorizonMinutes): number {
-  const atrPercent = snapshot.components.features.atrPercent;
-  const sigmaPerMinute = clamp(atrPercent * 0.35, 0.06, 0.4);
+  const raw = snapshot.components.features.sigmaPerMinutePercent;
+  const sigmaPerMinute = Number.isFinite(raw)
+    ? clamp(raw, MIN_SIGMA_PER_MINUTE_PERCENT, MAX_SIGMA_PER_MINUTE_PERCENT)
+    : REFERENCE_SIGMA_PER_MINUTE_PERCENT;
   return sigmaPerMinute * Math.sqrt(horizon);
 }
 
@@ -77,10 +86,16 @@ export function computeResolution(
 
   const referencePrice = snapshot.btcPriceAtT0;
   const returnPercent = (actualPrice - referencePrice) / referencePrice * 100;
+  // Volatility-scaled neutral band: a move only counts as directional when it
+  // exceeds a fraction of the horizon's own sigma.
+  const neutralBandPercent = Math.max(
+    NEUTRAL_BAND_FLOOR_PERCENT,
+    NEUTRAL_BAND_SIGMA * horizonSigmaPercent(snapshot, horizon)
+  );
   const actualDirection: -1 | 0 | 1 =
-    returnPercent > NEUTRAL_BAND_PERCENT
+    returnPercent > neutralBandPercent
       ? 1
-      : returnPercent < -NEUTRAL_BAND_PERCENT
+      : returnPercent < -neutralBandPercent
         ? -1
         : 0;
 
@@ -95,7 +110,7 @@ export function computeResolution(
       ? (200 * Math.abs(impliedTargetPrice - actualPrice)) / symmetricDenominator
       : 100;
 
-  const tolerancePercent = Math.max(0.05, 1.2 * horizonSigmaPercent(snapshot, horizon));
+  const tolerancePercent = Math.max(0.05, MC_TOLERANCE_SIGMA * horizonSigmaPercent(snapshot, horizon));
   const magnitudeClosenessPercent = clamp(100 * (1 - smapePercent / tolerancePercent), 0, 100);
 
   const accuracyPercent = round(
@@ -174,38 +189,96 @@ export function buildAggregates(
 ): HorizonAggregate[] {
   const scoped = resolutions.filter((resolution) => resolution.origin === origin);
 
+  // Snapshot spacing (minutes) per origin — the basis for the overlap
+  // correction. Derived from the resolutions themselves so no configuration
+  // can quietly claim independence the data does not have.
+  const snapshotTimes = new Map<string, number>();
+  for (const resolution of scoped) {
+    if (!snapshotTimes.has(resolution.snapshotId)) {
+      snapshotTimes.set(
+        resolution.snapshotId,
+        resolution.targetTimestampMs - HORIZON_MS(resolution.horizonMinutes)
+      );
+    }
+  }
+  const orderedTimes = [...snapshotTimes.values()].sort((a, b) => a - b);
+  const gaps: number[] = [];
+  for (let i = 1; i < orderedTimes.length; i += 1) {
+    const gap = (orderedTimes[i] - orderedTimes[i - 1]) / 60_000;
+    if (gap > 0) gaps.push(gap);
+  }
+  const medianGapMinutes = gaps.length > 0 ? gaps.sort((a, b) => a - b)[Math.floor(gaps.length / 2)] : 1;
+
   const aggregates = EVALUATION_HORIZONS.map((horizon) => {
     const rows = scoped.filter((resolution) => resolution.horizonMinutes === horizon);
     const samples = rows.length;
-    const wins = rows.filter((row) => row.directionalHit).length;
-    const directionalAccuracyPercent = samples > 0 ? (wins / samples) * 100 : 0;
+    // Selective-prediction scoring: the hit rate is measured against the moves
+    // that actually happened. Scoring abstentions against a flat market would
+    // reward reckless calls (a fixed deadband caps a zero-skill model at ~41 %
+    // DA and pushes it to call every tick), so neutral outcomes are removed
+    // from the denominator and reported separately as coverage/flat share.
+    const decisive = rows.filter((row) => row.actualDirection !== 0);
+    const decisiveSamples = decisive.length;
+    const wins = decisive.filter((row) => row.directionalHit).length;
+    const directionalAccuracyPercent = decisiveSamples > 0 ? (wins / decisiveSamples) * 100 : 0;
     const magnitudeClosenessPercent = meanOf(rows.map((row) => row.magnitudeClosenessPercent));
     const brierScore = meanOf(rows.map((row) => row.brierContribution));
     const accuracyPercent =
-      samples > 0
+      decisiveSamples > 0
         ? ACCURACY_DIRECTION_WEIGHT * directionalAccuracyPercent +
           ACCURACY_MAGNITUDE_WEIGHT * magnitudeClosenessPercent
         : 0;
-    const confidenceWeight = samples / (samples + CONFIDENCE_K);
+    const neutralShare = samples > 0 ? (samples - decisiveSamples) / samples : 0;
+    const coveragePercent = samples > 0 ? (decisiveSamples / samples) * 100 : 0;
+    // Overlap correction: consecutive snapshots share horizon/stride of the
+    // same price path, so N_eff = N · min(1, stride / horizon).
+    const independence = Math.min(1, medianGapMinutes / horizon);
+    const effectiveSamples = Math.max(0, samples * independence);
+    const confidenceWeight = effectiveSamples / (effectiveSamples + CONFIDENCE_K);
     const lastResolved = rows.reduce<number | null>(
       (acc, row) => (acc === null || row.resolvedAtExchangeMs > acc ? row.resolvedAtExchangeMs : acc),
       null
     );
 
+    // Chronological split-half validation: the edge must survive out of
+    // sample, so both halves have to beat a coin flip independently.
+    const chronological = [...rows].sort((a, b) => a.resolvedAtExchangeMs - b.resolvedAtExchangeMs);
+    const half = Math.floor(chronological.length / 2);
+    const halves = [chronological.slice(0, half), chronological.slice(half)];
+    const isOutOfSampleConsistent =
+      halves.every((part) => {
+        const decisivePart = part.filter((row) => row.actualDirection !== 0);
+        if (decisivePart.length < 10) return false;
+        const partWins = decisivePart.filter((row) => row.directionalHit).length;
+        const partIndependence = Math.min(1, independence);
+        return (
+          wilsonLowerBound(partWins * partIndependence, decisivePart.length * partIndependence) > 50
+        );
+      });
+
     return {
       horizonMinutes: horizon,
       samples,
+      effectiveSamples: round(effectiveSamples, 2),
+      isOutOfSampleConsistent,
       wins,
       directionalAccuracyPercent: round(directionalAccuracyPercent, 2),
-      daLowerBoundPercent: round(wilsonLowerBound(wins, samples), 2),
+      // The confidence bound must use the *overlap-corrected* count, otherwise
+      // 1 000 overlapping 5-minute slots masquerade as 1 000 independent bets.
+      daLowerBoundPercent: round(
+        wilsonLowerBound(wins * independence, decisiveSamples * independence),
+        2
+      ),
       magnitudeClosenessPercent: round(magnitudeClosenessPercent, 2),
       accuracyPercent: round(accuracyPercent, 2),
       brierScore: round(brierScore, 4),
+      neutralShare: round(neutralShare, 4),
+      coveragePercent: round(coveragePercent, 2),
       confidenceWeight: round(confidenceWeight, 4),
       rankedScore: round(confidenceWeight * accuracyPercent, 2),
       rank: 0,
-      isProvisional: samples >= MIN_SAMPLES_PROVISIONAL,
-      isGraduated: samples >= GRADUATION_SAMPLES,
+      isProvisional: effectiveSamples >= MIN_SAMPLES_PROVISIONAL,
+      isGraduated: effectiveSamples >= GRADUATION_SAMPLES,
       lastResolvedAtMs: lastResolved,
     } satisfies HorizonAggregate;
   });
@@ -248,6 +321,10 @@ export function buildPaperGraduation(resolutions: readonly HorizonResolution[]):
       samples >= GRADUATION_SAMPLES &&
       winRate >= GRADUATION_WIN_RATE &&
       profitFactor >= GRADUATION_PROFIT_FACTOR,
+    isGraduatedStrict:
+      samples >= GRADUATION_SAMPLES_STRICT &&
+      winRate >= GRADUATION_WIN_RATE &&
+      profitFactor >= GRADUATION_PROFIT_FACTOR,
   };
 }
 
@@ -266,18 +343,40 @@ export function buildVerdict(
       headline: 'DATENBASIS ZU DÜNN — NOCH KEIN HORIZONT AUFGELÖST',
       detail:
         pendingHorizons > 0
-          ? `${pendingHorizons} Horizont-Slots warten auf ihre Zielzeit. Eine Empfehlung ist erst ab N ≥ ${MIN_SAMPLES_PROVISIONAL} aufgelösten Stichproben zulässig.`
+          ? `${pendingHorizons} Horizont-Slot(s) sind offen (Zielzeit noch nicht erreicht oder ohne beobachteten Zielpreis). Eine Empfehlung ist erst ab N_eff ≥ ${MIN_SAMPLES_PROVISIONAL} zulässig.`
           : 'Es existieren keine offenen Slots — die Prognose-Ledger ist leer.',
       horizon: null,
     };
   }
 
-  if (best.samples < MIN_SAMPLES_PROVISIONAL) {
+  if (best.effectiveSamples < MIN_SAMPLES_PROVISIONAL) {
     return {
       code: 'E2000',
       severity: 'warn',
-      headline: `PROVISORISCH: HORIZONT ${best.horizonMinutes} MIN (N = ${best.samples})`,
-      detail: `Gewichtete Genauigkeit ${best.rankedScore.toFixed(1)}% bei nur ${best.samples} Stichprobe(n). Mindestbasis N ≥ ${MIN_SAMPLES_PROVISIONAL} noch nicht erreicht (Shrinkage k = ${CONFIDENCE_K}).`,
+      headline: `PROVISORISCH: HORIZONT ${best.horizonMinutes} MIN (N_eff = ${best.effectiveSamples.toFixed(1)})`,
+      detail: `${best.samples} aufgelöste Slots, aber überlappende Fenster reduzieren die unabhängige Basis auf N_eff = ${best.effectiveSamples.toFixed(1)} (Minimum ${MIN_SAMPLES_PROVISIONAL}, Shrinkage k = ${CONFIDENCE_K}).`,
+      horizon: best.horizonMinutes,
+    };
+  }
+
+  // Statistical gate: the Wilson 95 % lower bound must clear 50 %, i.e. the
+  // edge must be distinguishable from a coin flip at the achieved sample size.
+  if (best.daLowerBoundPercent < 50) {
+    return {
+      code: 'E2100',
+      severity: 'warn',
+      headline: `NICHT SIGNIFIKANT: HORIZONT ${best.horizonMinutes} MIN`,
+      detail: `Richtungstreffer ${best.directionalAccuracyPercent.toFixed(1)}%, aber die Wilson-Untergrenze liegt bei ${best.daLowerBoundPercent.toFixed(1)}% (< 50%) — kein statistischer Beleg für einen Vorteil (N_eff = ${best.effectiveSamples.toFixed(1)}).`,
+      horizon: best.horizonMinutes,
+    };
+  }
+
+  if (!best.isOutOfSampleConsistent) {
+    return {
+      code: 'E2100',
+      severity: 'warn',
+      headline: `NICHT OUT-OF-SAMPLE BESTÄTIGT: HORIZONT ${best.horizonMinutes} MIN`,
+      detail: `Der Vorteil (Richtungstreffer ${best.directionalAccuracyPercent.toFixed(1)}%) hält der chronologischen Halbierungsprüfung nicht stand — mindestens eine Hälfte der Historie liegt statistisch nicht über 50%. Keine Handelsfreigabe.`,
       horizon: best.horizonMinutes,
     };
   }
@@ -296,7 +395,7 @@ export function buildVerdict(
     code: null,
     severity: 'success',
     headline: `HORIZONT ${best.horizonMinutes} MIN IST DER ZUVERLÄSSIGSTE`,
-    detail: `Gewichtete Genauigkeit ${best.rankedScore.toFixed(1)}% · Richtungstreffer ${best.directionalAccuracyPercent.toFixed(1)}% (Wilson-Untergrenze ${best.daLowerBoundPercent.toFixed(1)}%) · Kursnähe ${best.magnitudeClosenessPercent.toFixed(1)}% · N = ${best.samples} · Gewicht ${(best.confidenceWeight * 100).toFixed(1)}%.`,
+    detail: `Gewichtete Genauigkeit ${best.rankedScore.toFixed(1)}% · Richtungstreffer ${best.directionalAccuracyPercent.toFixed(1)}% (Wilson-Untergrenze ${best.daLowerBoundPercent.toFixed(1)}%) · Kursnähe ${best.magnitudeClosenessPercent.toFixed(1)}% · N = ${best.samples} (${best.coveragePercent.toFixed(0)}% mit Bewegung) · Gewicht ${(best.confidenceWeight * 100).toFixed(1)}%.`,
     horizon: best.horizonMinutes,
   };
 }

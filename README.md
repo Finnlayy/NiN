@@ -86,8 +86,16 @@ Architektur, Invarianten und Fehler-Taxonomie:
 [`docs/PARAGRAPH2-MULTI-HORIZON.md`](docs/PARAGRAPH2-MULTI-HORIZON.md).
 
 ```bash
-npm run test:horizon   # Invarianten: Immutabilität, Zero-Future-Leak, Ranking, Replay
+npm run test:horizon   # 24 Tests: Immutabilität, Zero-Future-Leak, Ranking, Replay,
+                       # Überlappungs-Korrektur und statistische Ehrlichkeit
 ```
+
+Merkmale: 1-Minuten-Bar-Features (RSI/ATR/CISD/BB, EMA50/200, Hurst) aus
+Kraken-OHLC (`GET /api/exchange/ohlc`), überlappungskorrigierte
+Konfidenz (`N_eff`), Wilson-Untergrenze, chronologische Halbierungsprüfung und
+ein Divergenz-Schutz zwischen Live-Preis und Bar-Historie. Die Testsuite
+belegt, dass ein Random Walk **nie** als handelbar gemeldet wird, während ein
+echter Trend erkannt wird (20 Seeds: 0/20 falsch-positive, 20/20 richtig-positive).
 
 Die Börsenuhr kommt über `GET /api/exchange/clock` (Kraken Server-Time, serverseitig
 gecacht); ohne erreichbare Kraken-API degradiert das Widget sichtbar auf die lokale

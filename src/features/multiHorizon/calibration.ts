@@ -35,6 +35,10 @@ export const defaultCalibration = (): CalibrationState => ({
 
 const LEARNING_RATE = 0.05;
 const MAX_FIT_SAMPLES = 400;
+/** Maximum calibration bias the model may carry. */
+const MAX_BIAS = 0.4;
+/** Evidence needed before the bias is trusted at full strength. */
+const BIAS_SHRINKAGE_SAMPLES = 30;
 
 /**
  * One deterministic online calibration pass over the realised resolutions.
@@ -62,8 +66,15 @@ export function updateCalibration(
     bias -= LEARNING_RATE * error;
     temperatureT -= LEARNING_RATE * error * (-logit(raw) / (temperatureT * temperatureT));
     temperatureT = clamp(temperatureT, 0.5, 3);
-    bias = clamp(bias, -1.5, 1.5);
+    bias = clamp(bias, -MAX_BIAS, MAX_BIAS);
   }
+
+  // Shrink the bias toward zero: it exists to correct a *calibration* offset,
+  // not to become a permanent directional bet. Without this, an online fit on
+  // a drifting path turns the model into a one-directional predictor and a
+  // random walk can look skilful by luck.
+  const shrinkage = labelled.length / (labelled.length + BIAS_SHRINKAGE_SAMPLES);
+  bias = clamp(bias * shrinkage, -MAX_BIAS, MAX_BIAS);
 
   const brier =
     labelled.reduce((acc, resolution) => acc + resolution.brierContribution, 0) / labelled.length;

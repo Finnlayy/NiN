@@ -10,16 +10,25 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  MIN_TICKS_FOR_SNAPSHOT,
+  MIN_BARS_FOR_SNAPSHOT,
   SNAPSHOT_CADENCE_MS,
   TICK_POLL_MS,
 } from '../features/multiHorizon/config';
 import { useExchangeClock } from '../features/multiHorizon/exchangeClock';
 import {
-  buildFeatureFrame,
+  buildFeatureFrameFromBars,
   buildThreeComponentState,
+  ticksFromBars,
   type PriceTick,
 } from '../features/multiHorizon/featureEngine';
+import {
+  HISTORY_REFRESH_MS,
+  emptyHistory,
+  fetchHistoryBars,
+  mergeBars,
+  mergeBarsWithQuality,
+  type HistoryState,
+} from '../features/multiHorizon/historyFeed';
 import {
   computeResolution,
   summariseHorizons,
@@ -59,7 +68,7 @@ import type {
   SubAgentLayer,
 } from '../features/multiHorizon/types';
 import { EVALUATION_HORIZONS, HORIZON_MS } from '../features/multiHorizon/types';
-import { getLiveSpot } from '../utils/liveSpot';
+import { getLiveSpot, onLiveSpotReady } from '../utils/liveSpot';
 
 export type LogFn = (
   message: string,
@@ -77,6 +86,7 @@ export interface MultiHorizonAccuracy {
   clock: ReturnType<typeof useExchangeClock>;
   commitGate: GateDecision | null;
   showReplay: boolean;
+  history: HistoryState;
   livePrice: number;
   totalLiveSnapshots: number;
   totalReplaySnapshots: number;
@@ -128,9 +138,15 @@ export function useMultiHorizonAccuracy(onLogEvent?: LogFn): MultiHorizonAccurac
 
   const [ticks, setTicks] = useState<PriceTick[]>([]);
   const ticksRef = useRef<PriceTick[]>([]);
+  const [history, setHistory] = useState<HistoryState>(() => emptyHistory());
+  const historyRef = useRef<HistoryState>(history);
+  historyRef.current = history;
   const [commitGate, setCommitGate] = useState<GateDecision | null>(null);
   const [showReplay, setShowReplay] = useState(false);
   const [livePrice, setLivePrice] = useState<number>(() => getLiveSpot('BTC'));
+  // Ticks are only recorded once the venue feed delivered a real quote; the
+  // built-in fallback price would otherwise look like a 30 % feed divergence.
+  const feedReadyRef = useRef(false);
 
   const applyLedger = useCallback((next: HorizonLedger) => {
     ledgerRef.current = next;
@@ -161,10 +177,19 @@ export function useMultiHorizonAccuracy(onLogEvent?: LogFn): MultiHorizonAccurac
   /* [Blanche] live ticks                                             */
   /* ---------------------------------------------------------------- */
 
+  useEffect(
+    () =>
+      onLiveSpotReady(() => {
+        feedReadyRef.current = true;
+      }),
+    []
+  );
+
   useEffect(() => {
     const poll = () => {
       const price = getLiveSpot('BTC');
       setLivePrice(price);
+      if (!feedReadyRef.current) return;
       if (!Number.isFinite(price) || price <= 0) return;
       const tsMs = Math.round(clockRef.current.nowMs);
       const previous = ticksRef.current;
@@ -182,6 +207,35 @@ export function useMultiHorizonAccuracy(onLogEvent?: LogFn): MultiHorizonAccurac
   }, []);
 
   /* ---------------------------------------------------------------- */
+  /* [Blanche] 1-minute bar history backfill                          */
+  /* ---------------------------------------------------------------- */
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const pull = async () => {
+      setHistory((previous) => ({ ...previous, isLoading: true }));
+      const next = await fetchHistoryBars();
+      if (cancelled) return;
+      setHistory(next);
+      if (!next.authoritative) {
+        logRef.current?.(
+          `OHLC-Historie nicht verfügbar (${next.error ?? 'unbekannt'}) — Paragraph 2 arbeitet im Warm-up mit den live beobachteten 1-Minuten-Bars.`,
+          'warn',
+          'Blanche'
+        );
+      }
+    };
+
+    void pull();
+    const timer = setInterval(pull, HISTORY_REFRESH_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, []);
+
+  /* ---------------------------------------------------------------- */
   /* [Jaune] snapshot commit                                          */
   /* ---------------------------------------------------------------- */
 
@@ -190,16 +244,34 @@ export function useMultiHorizonAccuracy(onLogEvent?: LogFn): MultiHorizonAccurac
       const currentClock = clockRef.current;
       const nowExchangeMs = Math.round(currentClock.nowMs);
       const buffer = ticksRef.current;
-      const lastTick = buffer[buffer.length - 1] ?? null;
       const price = getLiveSpot('BTC');
 
+      const merged = mergeBarsWithQuality(historyRef.current.bars, buffer);
+      const bars = merged.bars;
+      // Reference-price fallback: without a live spot route the venue's own bar
+      // closes are the freshest real prices available (never a synthetic value).
+      const ticks = buffer.length > 0 ? buffer : ticksFromBars(bars);
+      if (merged.gapRejected) {
+        applyLedger(
+          pushGovernance(
+            ledgerRef.current,
+            'E3000',
+            `Feed-Divergenz ${merged.gapPercent?.toFixed(2)} % zwischen Kraken-OHLC und Live-Preis — Live-Overlay verworfen, Historie unverändert (keine erfundenen Kurssprünge).`,
+            'warn',
+            'NOIR',
+            nowExchangeMs
+          )
+        );
+      }
+      const referenceTick = ticks[ticks.length - 1] ?? null;
+      const referencePrice = referenceTick?.price ?? price;
       const gate = evaluateCommitGate({
         nowExchangeMs,
-        price,
-        lastTickMs: lastTick?.tsMs ?? null,
+        price: referencePrice,
+        lastTickMs: referenceTick?.tsMs ?? null,
         clockState: currentClock.state,
         clockOffsetMs: currentClock.offsetMs,
-        tickCount: buffer.length,
+        tickCount: bars.length,
       });
       setCommitGate(gate);
 
@@ -220,18 +292,18 @@ export function useMultiHorizonAccuracy(onLogEvent?: LogFn): MultiHorizonAccurac
         return;
       }
 
-      const frame = buildFeatureFrame(buffer);
-      if (!frame || frame.tickCount < MIN_TICKS_FOR_SNAPSHOT) {
+      const frame = buildFeatureFrameFromBars(bars, ticks.length);
+      if (!frame || frame.barCount < MIN_BARS_FOR_SNAPSHOT) {
         return;
       }
 
       const components = buildThreeComponentState(frame, current.calibration);
       const snapshot = createSnapshot({
         t0ExchangeMs: nowExchangeMs,
-        btcPriceAtT0: price,
+        btcPriceAtT0: referencePrice,
         components,
         origin: 'LIVE',
-        m8EngineStatus: deriveM8Status(gate, components.regime, frame.tickCount),
+        m8EngineStatus: deriveM8Status(gate, components.regime, frame.barCount),
       });
 
       const appended = appendSnapshot(current, snapshot);
@@ -269,7 +341,8 @@ export function useMultiHorizonAccuracy(onLogEvent?: LogFn): MultiHorizonAccurac
       const now = clockRef.current.nowMs;
       const latest = latestSnapshot(ledgerRef.current.snapshots, 'LIVE');
       if (latest && now - latest.t0ExchangeMs < SNAPSHOT_CADENCE_MS) return;
-      if (ticksRef.current.length < MIN_TICKS_FOR_SNAPSHOT) return;
+      const availableBars = mergeBars(historyRef.current.bars, ticksRef.current).length;
+      if (availableBars < MIN_BARS_FOR_SNAPSHOT) return;
       attemptCommit(false);
     }, 5_000);
     return () => clearInterval(timer);
@@ -375,7 +448,12 @@ export function useMultiHorizonAccuracy(onLogEvent?: LogFn): MultiHorizonAccurac
     const current = ledgerRef.current;
     const now = Math.round(clockRef.current.nowMs);
     const anchor = getLiveSpot('BTC');
-    const seeded = seedReplayLedger(current, { nowExchangeMs: now, anchorPrice: anchor });
+    const seeded = seedReplayLedger(current, {
+      nowExchangeMs: now,
+      anchorPrice: anchor,
+      hours: 24,
+      snapshotIntervalMinutes: 10,
+    });
     applyLedger(seeded.ledger);
     setShowReplay(true);
     logRef.current?.(
@@ -441,6 +519,15 @@ export function useMultiHorizonAccuracy(onLogEvent?: LogFn): MultiHorizonAccurac
     [ledger.resolutions, ledger.calibration, livePending]
   );
 
+  // Display price: live tick → venue bar close → built-in fallback.
+  const effectivePrice = useMemo(() => {
+    const lastTick = ticks[ticks.length - 1];
+    if (lastTick && Number.isFinite(lastTick.price)) return lastTick.price;
+    const lastBar = history.bars[history.bars.length - 1];
+    if (lastBar && Number.isFinite(lastBar.close)) return lastBar.close;
+    return livePrice;
+  }, [ticks, history.bars, livePrice]);
+
   const latestLive = useMemo(() => latestSnapshot(ledger.snapshots, 'LIVE'), [ledger.snapshots]);
   const latestReplay = useMemo(
     () => latestSnapshot(ledger.snapshots, 'REPLAY'),
@@ -458,7 +545,8 @@ export function useMultiHorizonAccuracy(onLogEvent?: LogFn): MultiHorizonAccurac
     clock,
     commitGate,
     showReplay,
-    livePrice,
+    history,
+    livePrice: effectivePrice,
     totalLiveSnapshots: ledger.snapshots.filter((snapshot) => snapshot.origin === 'LIVE').length,
     totalReplaySnapshots: ledger.snapshots.filter((snapshot) => snapshot.origin === 'REPLAY').length,
     resolutions: ledger.resolutions,

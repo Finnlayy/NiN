@@ -19,6 +19,7 @@
     { "source": "/api/execute-order", "destination": "/api/handler" },
     { "source": "/api/health", "destination": "/api/handler" },
     { "source": "/api/exchange/clock", "destination": "/api/handler" },
+    { "source": "/api/exchange/ohlc", "destination": "/api/handler" },
     { "source": "/api/ai/providers", "destination": "/api/handler" },
     { "source": "/api/ai/provider/select", "destination": "/api/handler" },
     { "source": "/api/ai/provider/test", "destination": "/api/handler" },

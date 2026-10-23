@@ -22,6 +22,7 @@ import { botRegistry } from './bots';
 import { handlePricesRequest } from './prices';
 import { fetchGitHubUser, rememberOidcHeader } from './connect';
 import { getExchangeClock } from './exchangeClock';
+import { getMarketHistory } from './marketHistory';
 
 const krakenExecutor = new KrakenOrderExecutor();
 
@@ -165,6 +166,15 @@ export async function handleRequest(req: IncomingMessage, res: ServerResponse): 
     if (method === 'GET' && (url === '/api/exchange/clock' || url === '/api/exchange/clock/')) {
       const clock = await getExchangeClock();
       sendJson(res, 200, clock);
+      return true;
+    }
+
+    if (method === 'GET' && (url === '/api/exchange/ohlc' || url === '/api/exchange/ohlc/')) {
+      const query = parse(req.url ?? '/', true).query;
+      const pair = typeof query.pair === 'string' ? query.pair : 'XBTUSD';
+      const interval = Number(typeof query.interval === 'string' ? query.interval : 1) || 1;
+      const history = await getMarketHistory(pair, interval);
+      sendJson(res, 200, history);
       return true;
     }
 

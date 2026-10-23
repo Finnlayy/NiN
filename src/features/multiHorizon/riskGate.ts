@@ -6,7 +6,7 @@
  * the UI can render a precise reason instead of an empty panel.
  */
 
-import { MAX_CLOCK_SKEW_MS, MAX_FEED_AGE_MS, MIN_TICKS_FOR_SNAPSHOT } from './config';
+import { MAX_CLOCK_SKEW_MS, MAX_FEED_AGE_MS, MIN_BARS_FOR_SNAPSHOT } from './config';
 import type { ErrorCode, ErrorSeverity, MarketRegime, M8EngineStatus } from './types';
 import type { ClockState } from './exchangeClock';
 
@@ -58,10 +58,10 @@ export function evaluateCommitGate(input: CommitGateInput): GateDecision {
   if (input.price === null || !Number.isFinite(input.price) || input.price <= 0) {
     return reject('E3000', 'Kein gültiger BTC-Preis vom Kraken-Feed — Snapshot verworfen.');
   }
-  if (input.tickCount < MIN_TICKS_FOR_SNAPSHOT) {
+  if (input.tickCount < MIN_BARS_FOR_SNAPSHOT) {
     return reject(
       'E2000',
-      `Nur ${input.tickCount} Preisticks im Puffer (Minimum ${MIN_TICKS_FOR_SNAPSHOT}) — Feature-Fenster noch nicht belastbar.`,
+      `Nur ${input.tickCount} 1-Minuten-Bar${input.tickCount === 1 ? '' : 's'} im Puffer (Minimum ${MIN_BARS_FOR_SNAPSHOT}) — Feature-Fenster noch nicht belastbar.`,
       'warn'
     );
   }
@@ -84,13 +84,16 @@ export function evaluateCommitGate(input: CommitGateInput): GateDecision {
   return pass('Signalintegrität bestätigt: Börsenuhr synchron, Feed frisch, Feature-Fenster belegt.');
 }
 
+/** Bars required before EMA200 / ATR-percentile / Hurst are all warm. */
+export const WARMUP_BARS = 200;
+
 export function deriveM8Status(
   gate: GateDecision,
   regime: MarketRegime,
-  tickCount: number
+  barCount: number
 ): M8EngineStatus {
   if (!gate.allowed) return 'QUARANTINED';
-  if (gate.degraded || tickCount < MIN_TICKS_FOR_SNAPSHOT * 2) return 'THROTTLED';
+  if (gate.degraded || barCount < WARMUP_BARS) return 'THROTTLED';
   if (regime === 'HIGH_VOL_CRISIS') return 'THROTTLED';
   return 'ACTIVE';
 }

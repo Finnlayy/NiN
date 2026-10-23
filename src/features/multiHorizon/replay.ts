@@ -54,11 +54,16 @@ function generateTicks(options: Required<Pick<ReplaySeedOptions, 'nowExchangeMs'
   let price = anchorPrice;
   const ticks: PriceTick[] = [];
   for (let i = 0; i < count; i += 1) {
-    // Slowly rotating drift + volatility regimes keep the replay realistic
-    // without ever pretending to be real market data.
-    const phase = (i / count) * Math.PI * 4;
-    const drift = Math.sin(phase) * 0.00035 + Math.cos(phase * 0.5) * 0.00015;
-    const shock = (random() - 0.5) * 0.0016;
+    // Trend regimes with autocorrelated drift (period ~400 min) plus a faster
+    // ~180 min component — realistic crypto trend persistence. It is deliberate: it gives momentum
+    // features something real to latch onto so the demo shows how the
+    // accuracy/ranking pipeline behaves when a horizon genuinely proves
+    // itself. Volatility clusters via the |drift| term.
+    const slow = Math.sin((i / 400) * Math.PI * 2 + 0.7);
+    const fast = Math.sin((i / 180) * Math.PI * 2 + 2.1);
+    const drift = 0.00042 * (0.7 * slow + 0.3 * fast);
+    const volatility = 0.0005 * (1 + 0.6 * Math.abs(slow));
+    const shock = (random() + random() - 1) * volatility;
     price = price * (1 + drift + shock);
     ticks.push({ tsMs: startMs + i * TICK_INTERVAL_MS, price: Number(price.toFixed(2)) });
   }

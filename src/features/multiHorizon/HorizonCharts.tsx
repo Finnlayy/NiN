@@ -251,10 +251,11 @@ export function PriceTrackChart({
 
 interface HorizonAccuracyChartProps {
   aggregates: readonly HorizonAggregate[];
+  /** Kept for call-site clarity: LIVE and REPLAY series are never mixed. */
   origin: SnapshotOrigin;
 }
 
-export function HorizonAccuracyChart({ aggregates, origin }: HorizonAccuracyChartProps) {
+export function HorizonAccuracyChart({ aggregates }: HorizonAccuracyChartProps) {
   const rowHeight = 26;
   const height = EVALUATION_HORIZONS.length * rowHeight + 34;
   const width = 720;
@@ -329,9 +330,7 @@ export function HorizonAccuracyChart({ aggregates, origin }: HorizonAccuracyChar
             >
               {aggregate.samples > 0
                 ? `${aggregate.accuracyPercent.toFixed(0)}% · N${aggregate.samples}`
-                : origin === 'REPLAY'
-                  ? '— · N0'
-                  : '— · N0'}
+                : '— · N0'}
             </text>
           </g>
         );
