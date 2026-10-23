@@ -181,15 +181,68 @@ positives and 20/20 true positives**; the earlier, unguarded implementation
 scored 10/20 false positives, which is why the overlap correction, the
 effective-count Wilson bound, the bias shrinkage and the split-half gate exist.
 
+## No synthetic prices — a missing price is shown as missing
+
+A price is only ever recorded when it was actually observed. `selectReferencePrice`
+(`src/features/multiHorizon/referencePrice.ts`) returns exactly one of:
+
+| Source | Meaning | Accepted when |
+| --- | --- | --- |
+| `LIVE_TICK` | current quote from the venue ticker route | age ≤ 90 s, drift ≤ +5 s |
+| `BAR_CLOSE` | close of the newest venue 1-minute bar | close age ≤ 90 s (bar cadence) |
+| `null` | nothing observable | caller must not snapshot |
+
+`null` means the widget shows `—`, the feed badge reads `KEINE KURSDATEN`, and
+`createSnapshot` throws instead of writing a record. There is no constant, no
+"last known" carry-forward, no interpolation and no rounding fallback anywhere on
+the price path: the legacy `getLiveSpot()` helper still exists, but only for
+cosmetic panels and it is unreachable from snapshot creation, resolution, P&L or
+the reference-price selection. A fresh live quote always beats a bar close, since
+the bar close happened somewhere inside its own minute.
+
+Every snapshot and every resolution therefore carries its provenance
+(`priceSource`, `observedAtExchangeMs`, `verifiedAtExchangeMs`,
+`verification: 'TICK' | 'BATCH_BACKFILL'`), so the audit trail can never claim a
+precision the data does not have.
+
+## Offline queue and single-batch backfill
+
+Horizons mature whether or not the browser is online. Instead of inventing the
+missing price, the hook **enqueues a comparison job** per matured snapshot and
+horizon (`enqueueJob`, idempotent per snapshot+horizon, bounded by
+`MAX_QUEUED_JOBS`). The job then stays `queued` until real venue data exists.
+
+When data returns — a feed recovery or the 20 s `QUEUE_FLUSH_INTERVAL_MS` ticker
+— the hook issues **one** request for the whole backlog:
+
+```
+GET /api/exchange/ohlc/batch?pair=XBTUSD&interval=1&from=…&to=…
+```
+
+`from`/`to` are clamped to the oldest queued target (at most `MAX_BACKFILL_WINDOW_MS`
+= 12 h). The server (`getMarketHistoryRange`) pages internally (≤ 12 pages of 720
+bars), so the browser still pays a single round trip regardless of how many
+points were missed — one request per flush, never one request per point.
+
+`resolveQueuedJobs` then matches each target minute to the bar that *contains*
+that minute, or the first bar within `BACKFILL_BAR_SLACK_MS` (60 s); if neither
+exists the job is marked `unresolvable` ("keine Schätzung") and stays visibly
+counted. Snapshots are never mutated by a backfill, and resolutions produced this
+way are marked `verification: 'BATCH_BACKFILL'` so they can be excluded from
+LIVE evidence if desired.
+
 ## Notes / limits
 
-- The ledger persists in `localStorage` (`nin:paragraph2:horizon-ledger:v2`);
+- The ledger persists in `localStorage` (`nin:paragraph2:horizon-ledger:v3`);
   hydration verifies every checksum and quarantines corrupted records. For a
   multi-operator deployment point `saveLedger`/`loadLedger` at the existing
   Upstash/`stateStore` backend. The schema version was bumped, so v1 ledgers
   from an earlier build are discarded instead of being mis-scored.
-- Resolutions require the app to observe the feed at the target time. Horizons
-  that matured while the app was closed stay open by design (`E3000`).
+- Horizons that mature without an observable price are not resolved from
+  memory: they are queued and later settled from venue bars in a single batch
+  request. Only a venue hole (no bar within 60 s of the target) leaves a job
+  `unresolvable`, and that remains visible in the queue panel rather than being
+  estimated (`E3000`). A horizon still maturing in the future is not queued.
 - LIVE evidence accrues slowly by construction: at one snapshot per minute a
   5-minute horizon reaches `N_eff ≈ 96` after eight hours, a 300-minute horizon
   needs considerably longer. That is the point of the overlap correction.

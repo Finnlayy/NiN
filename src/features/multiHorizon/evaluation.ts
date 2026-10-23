@@ -32,6 +32,7 @@ import {
   EVALUATION_HORIZONS,
   HORIZON_MS,
   type AccuracySummary,
+  type ResolutionVerification,
   type CalibrationState,
   type HorizonAggregate,
   type HorizonMinutes,
@@ -65,6 +66,15 @@ export function horizonSigmaPercent(snapshot: Paragraph2Snapshot, horizon: Horiz
 
 export type ResolutionDraft = Omit<HorizonResolution, 'checksum'>;
 
+export interface ResolutionOptions {
+  /** Exchange timestamp of the price observation (defaults to resolvedAt). */
+  observedAtExchangeMs?: number;
+  /** When the record was written (defaults to resolvedAt). */
+  verifiedAtExchangeMs?: number;
+  /** Live tick or offline batch backfill. */
+  verification?: ResolutionVerification;
+}
+
 /**
  * Evaluates one horizon. The caller is responsible for only invoking this once
  * `currentExchangeMs >= t0 + h`, and for passing the price observed at/after
@@ -74,7 +84,8 @@ export function computeResolution(
   snapshot: Paragraph2Snapshot,
   horizon: HorizonMinutes,
   actualPrice: number,
-  resolvedAtExchangeMs: number
+  resolvedAtExchangeMs: number,
+  options: ResolutionOptions = {}
 ): ResolutionDraft {
   if (!Number.isFinite(actualPrice) || actualPrice <= 0) {
     throw new Error('computeResolution: actual price must be a positive finite number');
@@ -139,6 +150,9 @@ export function computeResolution(
     magnitudeClosenessPercent: round(magnitudeClosenessPercent, 2),
     accuracyPercent,
     brierContribution,
+    observedAtExchangeMs: Math.round(options.observedAtExchangeMs ?? resolvedAtExchangeMs),
+    verifiedAtExchangeMs: Math.round(options.verifiedAtExchangeMs ?? resolvedAtExchangeMs),
+    verification: options.verification ?? 'LIVE_TICK',
     predictedProbabilityUp,
     paperPnlPercent: round(predictedDirection * returnPercent, 5),
     origin: snapshot.origin,

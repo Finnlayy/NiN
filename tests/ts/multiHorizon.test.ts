@@ -60,6 +60,25 @@ import {
 } from '../../src/features/multiHorizon/featureEngine';
 import { mergeBars, mergeBarsWithQuality } from '../../src/features/multiHorizon/historyFeed';
 import {
+  backfillWindow,
+  fetchBatchBars,
+  matchBarToTarget,
+  resolveQueuedJobs,
+  summariseQueue,
+} from '../../src/features/multiHorizon/batchBackfill';
+import {
+  feedStatusOf,
+  selectReferencePrice,
+  type ReferencePrice,
+} from '../../src/features/multiHorizon/referencePrice';
+import {
+  enqueueJob,
+  queuedJobs,
+  transitionJobs,
+  verifyJob,
+} from '../../src/features/multiHorizon/snapshotStore';
+import type { LiveSpotObservation } from '../../src/utils/liveSpot';
+import {
   ACCURACY_DIRECTION_WEIGHT,
   ACCURACY_MAGNITUDE_WEIGHT,
   MAX_CLOCK_SKEW_MS,
@@ -112,6 +131,7 @@ function snapshotFixture(
     t0ExchangeMs: T0,
     btcPriceAtT0: 100,
     components: componentsFixture(),
+    priceSource: 'LIVE_TICK',
     origin: 'LIVE',
     m8EngineStatus: 'ACTIVE',
     ...overrides,
@@ -140,6 +160,9 @@ function resolutionFixture(
     magnitudeClosenessPercent: accuracyPercent,
     accuracyPercent,
     brierContribution: hit ? 0.04 : 0.64,
+    observedAtExchangeMs: resolvedAtMs,
+    verifiedAtExchangeMs: resolvedAtMs,
+    verification: 'LIVE_TICK' as const,
     predictedProbabilityUp: 0.8,
     paperPnlPercent: hit ? 1 : -1,
     origin: 'LIVE',
@@ -720,4 +743,319 @@ test('exchange clock samples an offset with round-trip correction', async () => 
   assert.equal(sample.source, 'KRAKEN');
   assert.ok(Math.abs(sample.offsetMs - offset) < 1_500);
   assert.ok(sample.rttMs >= 0);
+});
+
+/* ------------------------------------------------------------------ */
+/* 6. No fallback prices                                              */
+/* ------------------------------------------------------------------ */
+
+test('no price is ever invented: missing or stale data yields null', () => {
+  const now = T0;
+  const freshObs: LiveSpotObservation = {
+    symbol: 'BTC',
+    price: 64_000,
+    updatedAtMs: now - 2_000,
+    source: 'KRAKEN_TICKERS',
+  };
+  const staleObs: LiveSpotObservation = { ...freshObs, updatedAtMs: now - 10 * 60_000 };
+  const freshBar: Bar = { tsMs: now - 60_000, open: 63_000, high: 64_000, low: 63_000, close: 63_900 };
+  const staleBar: Bar = { ...freshBar, tsMs: now - 30 * 60_000 };
+
+  // nothing at all → null (the widget must not snapshot)
+  assert.equal(
+    selectReferencePrice({ observation: null, lastBar: null, nowMs: now, maxAgeMs: 90_000 }),
+    null
+  );
+  // stale observation and stale bar → still null, never "last known"
+  assert.equal(
+    selectReferencePrice({ observation: staleObs, lastBar: staleBar, nowMs: now, maxAgeMs: 90_000 }),
+    null
+  );
+  // fresh live tick wins
+  const live = selectReferencePrice({
+    observation: freshObs,
+    lastBar: freshBar,
+    nowMs: now,
+    maxAgeMs: 90_000,
+  }) as ReferencePrice;
+  assert.equal(live.source, 'LIVE_TICK');
+  assert.equal(live.price, 64_000);
+  assert.equal(feedStatusOf(live), 'LIVE');
+
+  // live tick stale, real bar close fresh → BAR_CLOSE (still a venue price)
+  const barOnly = selectReferencePrice({
+    observation: staleObs,
+    lastBar: freshBar,
+    nowMs: now,
+    maxAgeMs: 90_000,
+  }) as ReferencePrice;
+  assert.equal(barOnly.source, 'BAR_CLOSE');
+  assert.equal(barOnly.price, 63_900);
+  assert.equal(feedStatusOf(barOnly), 'BAR_ONLY');
+
+  // a "future" observation beyond clock drift is not trusted either
+  assert.equal(
+    selectReferencePrice({
+      observation: { ...freshObs, updatedAtMs: now + 60_000 },
+      lastBar: null,
+      nowMs: now,
+      maxAgeMs: 90_000,
+    }),
+    null
+  );
+  assert.equal(feedStatusOf(null), 'MISSING');
+});
+
+test('snapshots refuse to be created without a real observed price', () => {
+  assert.throws(
+    () =>
+      createSnapshot({
+        t0ExchangeMs: T0,
+        btcPriceAtT0: Number.NaN,
+        components: componentsFixture(),
+        priceSource: 'LIVE_TICK',
+      }),
+    /real observed price/i
+  );
+  assert.throws(
+    () =>
+      createSnapshot({
+        t0ExchangeMs: T0,
+        btcPriceAtT0: 0,
+        components: componentsFixture(),
+        priceSource: 'BAR_CLOSE',
+      }),
+    /real observed price/i
+  );
+
+  const snapshot = snapshotFixture({ priceSource: 'BAR_CLOSE' });
+  assert.equal(snapshot.priceSource, 'BAR_CLOSE');
+  assert.ok(verifySnapshot(snapshot));
+});
+
+/* ------------------------------------------------------------------ */
+/* 7. Offline comparison queue + single batch backfill                */
+/* ------------------------------------------------------------------ */
+
+test('a matured horizon without an observation is queued, not fabricated', () => {
+  const ledger = appendSnapshot(createLedger(), snapshotFixture()).ledger;
+  const horizon: HorizonMinutes = 5;
+  const targetMs = T0 + HORIZON_MS(horizon);
+
+  const first = enqueueJob(ledger, {
+    snapshotId: ledger.snapshots[0].id,
+    horizonMinutes: horizon,
+    targetMs,
+    nowExchangeMs: targetMs + 1_000,
+  });
+  assert.equal(first.added, true);
+  assert.equal(queuedJobs(first.ledger).length, 1);
+  assert.ok(verifyJob(queuedJobs(first.ledger)[0]));
+
+  // Idempotent — the same comparison is never queued twice.
+  const second = enqueueJob(first.ledger, {
+    snapshotId: ledger.snapshots[0].id,
+    horizonMinutes: horizon,
+    targetMs,
+    nowExchangeMs: targetMs + 2_000,
+  });
+  assert.equal(second.added, false);
+  assert.equal(queuedJobs(second.ledger).length, 1);
+
+  // Already-resolved horizons are never queued.
+  const resolution = computeResolution(ledger.snapshots[0], horizon, 101, targetMs);
+  const resolvedLedger = appendResolution(ledger, resolution, targetMs + 1_000).ledger;
+  const third = enqueueJob(resolvedLedger, {
+    snapshotId: ledger.snapshots[0].id,
+    horizonMinutes: horizon,
+    targetMs,
+    nowExchangeMs: targetMs + 3_000,
+  });
+  assert.equal(third.added, false);
+  assert.equal(queuedJobs(third.ledger).length, 0);
+});
+
+test('one batch request resolves the whole missed window from real bar closes', () => {
+  // Three snapshots, each 5 minutes apart; the feed was down at every target.
+  const snapshots = [0, 5, 10].map((offsetMinutes) =>
+    snapshotFixture({ t0ExchangeMs: T0 + offsetMinutes * 60_000, btcPriceAtT0: 100 })
+  );
+  let ledger = createLedger();
+  for (const snapshot of snapshots) {
+    ledger = appendSnapshot(ledger, snapshot).ledger;
+  }
+  const nowExchangeMs = T0 + 30 * 60_000;
+  for (const snapshot of snapshots) {
+    const targetMs = snapshot.t0ExchangeMs + HORIZON_MS(5);
+    ledger = enqueueJob(ledger, {
+      snapshotId: snapshot.id,
+      horizonMinutes: 5,
+      targetMs,
+      nowExchangeMs,
+    }).ledger;
+  }
+  assert.equal(queuedJobs(ledger).length, 3);
+
+  // The window the widget would request in ONE call.
+  const window = backfillWindow(queuedJobs(ledger), nowExchangeMs)!;
+  assert.ok(window.fromMs <= T0 + HORIZON_MS(5));
+  assert.ok(window.toMs >= T0 + 10 * 60_000 + HORIZON_MS(5));
+
+  // Venue bars for the missed minutes (real closes, one per minute).
+  const bars: Bar[] = [];
+  for (let minute = 0; minute <= 30; minute += 1) {
+    const price = 100 + minute * 0.1;
+    bars.push({
+      tsMs: T0 + minute * 60_000,
+      open: price,
+      high: price,
+      low: price,
+      close: price,
+    });
+  }
+
+  const flush = resolveQueuedJobs(ledger, bars, nowExchangeMs);
+  assert.equal(flush.resolved, 3);
+  assert.equal(flush.unresolvable, 0);
+  assert.equal(queuedJobs(flush.ledger).length, 0);
+  assert.equal(flush.ledger.resolutions.length, 3);
+  assert.ok(flush.ledger.resolutions.every((resolution) => resolution.verification === 'BATCH_BACKFILL'));
+  assert.ok(flush.ledger.resolutions.every((resolution) => verifyResolution(resolution)));
+
+  // Each outcome uses the real close of its target minute, never an estimate.
+  for (const resolution of flush.ledger.resolutions) {
+    assert.equal(resolution.observedAtExchangeMs, resolution.targetTimestampMs + 60_000);
+    const minute = Math.round((resolution.targetTimestampMs - T0) / 60_000);
+    assert.equal(resolution.actualBtcPrice, Number((100 + minute * 0.1).toFixed(2)));
+  }
+
+  // Jobs are closed out and the queue summary reflects the backfill.
+  const summary = summariseQueue(flush.ledger.jobs, nowExchangeMs);
+  assert.equal(summary.queued, 0);
+  assert.equal(summary.resolvedByBackfill, 3);
+});
+
+test('a hole in the venue history yields unresolvable, never an interpolation', () => {
+  const snapshot = snapshotFixture();
+  let ledger = appendSnapshot(createLedger(), snapshot).ledger;
+  const targetMs = snapshot.t0ExchangeMs + HORIZON_MS(15);
+  ledger = enqueueJob(ledger, {
+    snapshotId: snapshot.id,
+    horizonMinutes: 15,
+    targetMs,
+    nowExchangeMs: targetMs + 10 * 60_000,
+  }).ledger;
+
+  // Bars exist, but the target minute itself is missing (venue gap).
+  const bars: Bar[] = [
+    { tsMs: targetMs - 10 * 60_000, open: 100, high: 100, low: 100, close: 100 },
+    { tsMs: targetMs + 10 * 60_000, open: 101, high: 101, low: 101, close: 101 },
+  ];
+  assert.equal(matchBarToTarget(targetMs, bars), null);
+
+  const flush = resolveQueuedJobs(ledger, bars, targetMs + 10 * 60_000);
+  assert.equal(flush.resolved, 0);
+  assert.equal(flush.unresolvable, 1);
+  assert.equal(flush.ledger.resolutions.length, 0, 'no price may be invented for the hole');
+  assert.equal(flush.ledger.jobs[0].status, 'unresolvable');
+  assert.match(flush.ledger.jobs[0].lastError ?? '', /keine Schätzung/);
+});
+
+test('queue resolution never touches the snapshot (no repainting)', () => {
+  const snapshot = snapshotFixture();
+  let ledger = appendSnapshot(createLedger(), snapshot).ledger;
+  const targetMs = T0 + HORIZON_MS(30);
+  ledger = enqueueJob(ledger, {
+    snapshotId: snapshot.id,
+    horizonMinutes: 30,
+    targetMs,
+    nowExchangeMs: targetMs + 60_000,
+  }).ledger;
+
+  const bars: Bar[] = [
+    { tsMs: targetMs, open: 100, high: 103, low: 100, close: 103 },
+  ];
+  const flush = resolveQueuedJobs(ledger, bars, targetMs + 60_000);
+  const after = flush.ledger.snapshots[0];
+  assert.equal(after.btcPriceAtT0, snapshot.btcPriceAtT0);
+  assert.equal(after.horizons[30].actualBtcPrice, null);
+  assert.equal(after.horizons[30].status, 'pending');
+  assert.deepEqual(after, snapshot);
+  assert.ok(verifySnapshot(after));
+});
+
+test('a queued comparison only matures by exchange time', () => {
+  const snapshot = snapshotFixture();
+  let ledger = appendSnapshot(createLedger(), snapshot).ledger;
+  const targetMs = T0 + HORIZON_MS(60);
+  ledger = enqueueJob(ledger, {
+    snapshotId: snapshot.id,
+    horizonMinutes: 60,
+    targetMs,
+    nowExchangeMs: targetMs - 60_000,
+  }).ledger;
+
+  const bars: Bar[] = [{ tsMs: targetMs, open: 100, high: 101, low: 100, close: 101 }];
+  const early = resolveQueuedJobs(ledger, bars, targetMs - 1);
+  assert.equal(early.resolved, 0);
+  assert.equal(early.skipped, 1);
+  assert.equal(queuedJobs(early.ledger).length, 1, 'the job stays queued');
+
+  const mature = resolveQueuedJobs(ledger, bars, targetMs + 1_000);
+  assert.equal(mature.resolved, 1);
+});
+
+test('batch fetch sends exactly one request for the whole window', async () => {
+  const calls: string[] = [];
+  const bars = [
+    { tsMs: T0, open: 100, high: 100, low: 100, close: 100 },
+    { tsMs: T0 + 60_000, open: 100, high: 101, low: 100, close: 101 },
+  ];
+  const result = await fetchBatchBars(T0, T0 + 60_000, async (input: RequestInfo | URL) => {
+    calls.push(String(input));
+    return new Response(
+      JSON.stringify({ source: 'KRAKEN', authoritative: true, bars, latencyMs: 5 }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } }
+    );
+  });
+
+  assert.equal(calls.length, 1, 'one request, not one per data point');
+  assert.match(calls[0], /\/api\/exchange\/ohlc\/batch/);
+  assert.match(calls[0], /from=\d+/);
+  assert.match(calls[0], /to=\d+/);
+  assert.equal(result.authoritative, true);
+  assert.equal(result.bars.length, 2);
+  assert.equal(result.error, null);
+});
+
+test('a failed batch keeps the queue intact and records the reason', async () => {
+  const result = await fetchBatchBars(T0, T0 + 600_000, async () =>
+    new Response(JSON.stringify({ error: 'kraken unreachable' }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  );
+  assert.equal(result.authoritative, false);
+  assert.equal(result.bars.length, 0);
+  assert.ok(result.error);
+
+  const ledger = appendSnapshot(createLedger(), snapshotFixture()).ledger;
+  const queued = enqueueJob(ledger, {
+    snapshotId: ledger.snapshots[0].id,
+    horizonMinutes: 5,
+    targetMs: T0 + HORIZON_MS(5),
+    nowExchangeMs: T0 + HORIZON_MS(5),
+  }).ledger;
+  const retried = transitionJobs(queued, [
+    {
+      id: queuedJobs(queued)[0].id,
+      status: 'queued',
+      attempts: 1,
+      lastAttemptExchangeMs: T0,
+      lastError: result.error,
+    },
+  ]);
+  assert.equal(queuedJobs(retried).length, 1, 'still queued for the next attempt');
+  assert.equal(retried.jobs[0].attempts, 1);
+  assert.ok(verifyJob(retried.jobs[0]));
 });

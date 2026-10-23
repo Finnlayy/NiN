@@ -15,6 +15,7 @@
 import {
   LEDGER_STORAGE_KEY,
   LEDGER_VERSION,
+  MAX_QUEUED_JOBS,
   MAX_STORED_RESOLUTIONS,
   MAX_STORED_SNAPSHOTS,
 } from './config';
@@ -22,12 +23,14 @@ import {
   EVALUATION_HORIZONS,
   HORIZON_MS,
   type CalibrationState,
+  type ComparisonJob,
   type GovernanceEvent,
   type HorizonEvaluationSlot,
   type HorizonMinutes,
   type HorizonResolution,
   type M8EngineStatus,
   type Paragraph2Snapshot,
+  type PriceSource,
   type SnapshotOrigin,
   type ThreeComponentState,
 } from './types';
@@ -38,6 +41,8 @@ export interface HorizonLedger {
   version: number;
   snapshots: Paragraph2Snapshot[];
   resolutions: HorizonResolution[];
+  /** Offline comparisons waiting for a batch backfill. */
+  jobs: ComparisonJob[];
   calibration: CalibrationState;
   governance: GovernanceEvent[];
 }
@@ -95,6 +100,7 @@ export function createLedger(): HorizonLedger {
     version: LEDGER_VERSION,
     snapshots: [],
     resolutions: [],
+    jobs: [],
     calibration: defaultCalibration(),
     governance: [],
   };
@@ -124,6 +130,8 @@ export interface SnapshotInput {
   t0ExchangeMs: number;
   btcPriceAtT0: number;
   components: ThreeComponentState;
+  /** Provenance of the price — must be a real observation. */
+  priceSource: PriceSource;
   origin?: SnapshotOrigin;
   m8EngineStatus?: M8EngineStatus;
 }
@@ -131,12 +139,16 @@ export interface SnapshotInput {
 export function createSnapshot(input: SnapshotInput): Paragraph2Snapshot {
   const origin = input.origin ?? 'LIVE';
   const t0 = Math.round(input.t0ExchangeMs);
+  if (!Number.isFinite(input.btcPriceAtT0) || input.btcPriceAtT0 <= 0) {
+    throw new Error('createSnapshot: a real observed price is required (no fallback prices)');
+  }
   const payload = {
     id: `S2-${t0}-${origin.slice(0, 1)}`,
     t0ExchangeMs: t0,
     btcPriceAtT0: Number(input.btcPriceAtT0.toFixed(2)),
     origin,
     m8EngineStatus: input.m8EngineStatus ?? 'ACTIVE',
+    priceSource: input.priceSource,
     components: input.components,
     horizons: buildPendingHorizons(t0),
   };
@@ -274,6 +286,113 @@ export function replaceCalibration(
 }
 
 /* ------------------------------------------------------------------ */
+/* Comparison queue                                                   */
+/* ------------------------------------------------------------------ */
+
+export function verifyJob(job: ComparisonJob): boolean {
+  const { checksum, ...payload } = job;
+  return checksumOf(payload) === checksum;
+}
+
+/**
+ * Queues a comparison for a matured horizon that had no observed price.
+ * Idempotent per (snapshotId, horizon) and never queues a horizon that already
+ * has a resolution. Jobs are immutable except for their retry bookkeeping,
+ * which is re-checksummed on every transition.
+ */
+export function enqueueJob(
+  ledger: HorizonLedger,
+  input: { snapshotId: string; horizonMinutes: HorizonMinutes; targetMs: number; nowExchangeMs: number }
+): { ledger: HorizonLedger; added: boolean; error?: string } {
+  const alreadyResolved = ledger.resolutions.some(
+    (resolution) =>
+      resolution.snapshotId === input.snapshotId &&
+      resolution.horizonMinutes === input.horizonMinutes
+  );
+  if (alreadyResolved) return { ledger, added: false };
+
+  const existing = ledger.jobs.find(
+    (job) => job.snapshotId === input.snapshotId && job.horizonMinutes === input.horizonMinutes
+  );
+  if (existing) return { ledger, added: false };
+
+  const payload = {
+    id: `J-${input.snapshotId}-${input.horizonMinutes}`,
+    snapshotId: input.snapshotId,
+    horizonMinutes: input.horizonMinutes,
+    targetMs: input.targetMs,
+    queuedAtExchangeMs: Math.round(input.nowExchangeMs),
+    attempts: 0,
+    lastAttemptExchangeMs: null,
+    status: 'queued' as const,
+    lastError: null,
+  };
+  const job = deepFreeze({ ...payload, checksum: checksumOf(payload) }) as ComparisonJob;
+
+  const active = ledger.jobs.filter((entry) => entry.status === 'queued');
+  if (active.length >= MAX_QUEUED_JOBS) {
+    return {
+      ledger,
+      added: false,
+      error: `Warteschlange voll (${MAX_QUEUED_JOBS}) — älteste Vergleiche müssen erst per Batch nachgeladen werden.`,
+    };
+  }
+  return { ledger: { ...ledger, jobs: [...ledger.jobs, job] }, added: true };
+}
+
+export interface JobTransition {
+  id: string;
+  status: ComparisonJob['status'];
+  attempts?: number;
+  lastAttemptExchangeMs?: number | null;
+  lastError?: string | null;
+}
+
+/** Applies status/retry transitions and re-seals the affected jobs. */
+export function transitionJobs(
+  ledger: HorizonLedger,
+  transitions: readonly JobTransition[]
+): HorizonLedger {
+  if (transitions.length === 0) return ledger;
+  const byId = new Map(transitions.map((transition) => [transition.id, transition]));
+  const jobs = ledger.jobs.map((job) => {
+    const transition = byId.get(job.id);
+    if (!transition) return job;
+    const { checksum: _checksum, ...payload } = job;
+    const next = {
+      ...payload,
+      status: transition.status,
+      attempts: transition.attempts ?? payload.attempts,
+      lastAttemptExchangeMs:
+        transition.lastAttemptExchangeMs === undefined
+          ? payload.lastAttemptExchangeMs
+          : transition.lastAttemptExchangeMs,
+      lastError:
+        transition.lastError === undefined ? payload.lastError : transition.lastError,
+    };
+    return deepFreeze({ ...next, checksum: checksumOf(next) }) as ComparisonJob;
+  });
+  return { ...ledger, jobs };
+}
+
+export function queuedJobs(ledger: HorizonLedger): ComparisonJob[] {
+  return ledger.jobs
+    .filter((job) => job.status === 'queued')
+    .sort((a, b) => a.targetMs - b.targetMs);
+}
+
+/** Drop resolved/unresolvable jobs once they are no longer interesting. */
+export function pruneJobs(ledger: HorizonLedger, keepClosed = 200): HorizonLedger {
+  const closed = ledger.jobs.filter((job) => job.status !== 'queued');
+  if (closed.length <= keepClosed) return ledger;
+  const keepIds = new Set(closed.slice(-keepClosed).map((job) => job.id));
+  return {
+    ...ledger,
+    jobs: ledger.jobs.filter((job) => job.status === 'queued' || keepIds.has(job.id)),
+  };
+}
+
+/* ------------------------------------------------------------------ */
 /* Persistence                                                        */
 /* ------------------------------------------------------------------ */
 
@@ -323,11 +442,17 @@ export function loadLedger(): LedgerLoadResult {
       if (candidate && verifyResolution(candidate)) resolutions.push(deepFreeze(candidate));
       else corruptedRecords += 1;
     }
+    const jobs: ComparisonJob[] = [];
+    for (const candidate of parsed.jobs ?? []) {
+      if (candidate && verifyJob(candidate)) jobs.push(deepFreeze(candidate));
+      else corruptedRecords += 1;
+    }
 
     let ledger: HorizonLedger = {
       version: LEDGER_VERSION,
       snapshots: snapshots.slice(-MAX_STORED_SNAPSHOTS),
       resolutions: resolutions.slice(-MAX_STORED_RESOLUTIONS),
+      jobs,
       calibration: parsed.calibration ?? defaultCalibration(),
       governance: Array.isArray(parsed.governance) ? parsed.governance.slice(-MAX_GOVERNANCE_EVENTS) : [],
     };

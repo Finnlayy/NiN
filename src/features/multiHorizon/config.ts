@@ -85,10 +85,26 @@ export const REFERENCE_SIGMA_PER_MINUTE_PERCENT = 0.15;
 export const MIN_SIGMA_PER_MINUTE_PERCENT = 0.01;
 export const MAX_SIGMA_PER_MINUTE_PERCENT = 0.8;
 
+/* ------------------------------------------------------------------ */
+/* Offline comparison queue / batch backfill                          */
+/* ------------------------------------------------------------------ */
+
+/** Queued comparisons are retried at most this often. */
+export const QUEUE_FLUSH_INTERVAL_MS = 20_000;
+
+/** Hard cap on queued comparison jobs (oldest are reported, not dropped silently). */
+export const MAX_QUEUED_JOBS = 800;
+
+/** Oldest window a single batch request will ask for (Kraken keeps ~720 1-min bars). */
+export const MAX_BACKFILL_WINDOW_MS = 12 * 60 * 60_000;
+
+/** A bar may be used for a target only if it starts this close before it. */
+export const BACKFILL_BAR_SLACK_MS = 60_000;
+
 /** Ledger retention caps (append-only records only). */
 export const MAX_STORED_SNAPSHOTS = 320;
 export const MAX_STORED_RESOLUTIONS = 2_400;
 
 /** Persistence key / schema version. */
-export const LEDGER_STORAGE_KEY = 'nin:paragraph2:horizon-ledger:v2';
-export const LEDGER_VERSION = 2;
+export const LEDGER_STORAGE_KEY = 'nin:paragraph2:horizon-ledger:v3';
+export const LEDGER_VERSION = 3;

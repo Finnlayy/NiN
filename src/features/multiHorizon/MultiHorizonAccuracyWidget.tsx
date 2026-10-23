@@ -99,6 +99,12 @@ export default function MultiHorizonAccuracyWidget({
     showReplay,
     history,
     livePrice,
+    priceSource,
+    priceAgeMs,
+    feedStatus,
+    queue,
+    lastBatch,
+    flushQueue,
     totalLiveSnapshots,
     totalReplaySnapshots,
     resolutions,
@@ -119,9 +125,10 @@ export default function MultiHorizonAccuracyWidget({
   const scopedResolutions = resolutions.filter((resolution) => resolution.origin === scopeOrigin);
 
   const priceDelta =
-    latest !== null && latest.btcPriceAtT0 > 0
+    latest !== null && latest.btcPriceAtT0 > 0 && livePrice !== null
       ? ((livePrice - latest.btcPriceAtT0) / latest.btcPriceAtT0) * 100
       : null;
+  const hasLivePrice = livePrice !== null;
   const directionIcon =
     priceDelta === null || Math.abs(priceDelta) < 0.01 ? (
       <Minus className="w-4 h-4 text-slate-400" />
@@ -152,8 +159,6 @@ export default function MultiHorizonAccuracyWidget({
   );
 
   const resolvedForLatest = latestResolvedMap.size;
-  const lastTick = ticks.length > 0 ? ticks[ticks.length - 1] : null;
-  const feedAgeMs = lastTick ? Math.max(0, clock.nowMs - lastTick.tsMs) : null;
   const graduation = summary.graduation;
   const m8Status: M8EngineStatus | null =
     latest?.m8EngineStatus ?? (commitGate ? (commitGate.allowed ? 'THROTTLED' : 'QUARANTINED') : null);
@@ -202,6 +207,29 @@ export default function MultiHorizonAccuracyWidget({
             {clockLabel}
             <span className="opacity-70">Δ {clock.offsetMs.toFixed(0)}ms</span>
           </span>
+          <span
+            className={`px-2.5 py-1 rounded-lg border flex items-center gap-1.5 ${
+              feedStatus === 'LIVE'
+                ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
+                : feedStatus === 'BAR_ONLY'
+                  ? 'border-cyan-500/40 bg-cyan-500/10 text-cyan-300'
+                  : 'border-rose-500/50 bg-rose-500/10 text-rose-300'
+            }`}
+            title="Jeder Kurs stammt aus einer echten Börsenbeobachtung. Ohne frische Beobachtung wird kein Preis angezeigt und kein Snapshot erzeugt (keine Fallback-Preise)."
+          >
+            <Radio className="w-3 h-3" />
+            {feedStatus === 'LIVE'
+              ? 'LIVE-TICK'
+              : feedStatus === 'BAR_ONLY'
+                ? 'BAR-SCHLUSS'
+                : 'KEINE KURSDATEN'}
+          </span>
+          {queue.queued > 0 ? (
+            <span className="px-2.5 py-1 rounded-lg border border-amber-500/40 bg-amber-500/10 text-amber-300 flex items-center gap-1.5">
+              <Clock3 className="w-3 h-3" />
+              {queue.queued} Vergleich(e) in Warteschlange
+            </span>
+          ) : null}
           <span className="px-2.5 py-1 rounded-lg border border-slate-700 bg-slate-800/60 text-slate-300 flex items-center gap-1.5">
             <Radio className="w-3 h-3" />
             M8: {m8Status ?? '—'}
@@ -269,7 +297,14 @@ export default function MultiHorizonAccuracyWidget({
                   <Activity className="w-3 h-3 text-cyan-400" /> Live BTC/USD · Kursvektor &amp; 7 Zielfächer
                 </div>
                 <div className="flex items-baseline gap-2 mt-1">
-                  <span className="text-2xl font-bold text-white font-mono">{formatUsd(livePrice)}</span>
+                  <span className={`text-2xl font-bold font-mono ${hasLivePrice ? 'text-white' : 'text-slate-500'}`}>
+                    {hasLivePrice ? formatUsd(livePrice) : '—'}
+                  </span>
+                  {!hasLivePrice ? (
+                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded border border-rose-500/40 bg-rose-500/10 text-rose-300">
+                      KEIN LIVE-PREIS · keine Erfindung
+                    </span>
+                  ) : null}
                   <span
                     className={`text-xs font-mono flex items-center gap-0.5 ${
                       priceDelta === null || Math.abs(priceDelta) < 0.01
@@ -305,7 +340,8 @@ export default function MultiHorizonAccuracyWidget({
                   </span>
                 </div>
                 <div className="text-slate-500">
-                  Feed-Alter: {feedAgeMs !== null ? `${(feedAgeMs / 1000).toFixed(1)}s` : '—'}
+                  Preis-Alter: {priceAgeMs !== null ? `${(priceAgeMs / 1000).toFixed(1)}s` : '—'}
+                  {priceSource ? ` · ${priceSource === 'LIVE_TICK' ? 'Tick' : 'Bar'}` : ''}
                 </div>
               </div>
             </div>
@@ -566,6 +602,94 @@ export default function MultiHorizonAccuracyWidget({
           />
         </div>
 
+        {/* Offline comparison queue / batch backfill */}
+        <div
+          className={`rounded-xl border p-4 ${
+            queue.queued > 0
+              ? 'border-amber-500/40 bg-amber-500/5'
+              : 'border-slate-800 bg-[#0f1420]'
+          }`}
+        >
+          <div className="flex items-start justify-between gap-3 flex-wrap">
+            <div className="flex items-start gap-2.5">
+              <span
+                className={`p-1.5 rounded-lg border ${
+                  queue.queued > 0
+                    ? 'border-amber-500/40 bg-amber-500/10 text-amber-300'
+                    : 'border-slate-700 bg-slate-800/60 text-slate-400'
+                }`}
+              >
+                <Clock3 className="w-4 h-4" />
+              </span>
+              <div>
+                <div className="text-[11px] font-semibold text-slate-100 flex items-center gap-2 flex-wrap">
+                  Vergleichs-Warteschlange · Offline-Backfill
+                  <span className="px-1.5 py-0.5 rounded text-[9px] font-mono border border-slate-700 bg-slate-800/60 text-slate-300">
+                    {queue.queued} offen · {queue.resolvedByBackfill} per Batch gelöst
+                  </span>
+                  {queue.unresolvable > 0 ? (
+                    <span className="px-1.5 py-0.5 rounded text-[9px] font-mono border border-rose-500/30 bg-rose-500/10 text-rose-300">
+                      {queue.unresolvable} nicht auflösbar (E3000)
+                    </span>
+                  ) : null}
+                </div>
+                <p className="text-[10px] text-slate-400 mt-1 max-w-2xl leading-relaxed">
+                  Fehlt der Live-Feed zur Zielzeit, wird der Vergleich <strong>eingereiht</strong> statt
+                  geschätzt. Sobald Börsendaten wieder erreichbar sind, holt <em>ein einziger</em>{' '}
+                  Batch-Request (<code className="text-[10px] text-cyan-300">/api/exchange/ohlc/batch</code>)
+                  das gesamte verpasste Fenster und löst alle wartenden Vergleiche gegen die echten
+                  Bar-Schlusskurse auf — pro Datenpunkt wird nichts interpoliert.
+                </p>
+                <div className="flex flex-wrap items-center gap-1.5 mt-2 font-mono text-[9px]">
+                  {queue.oldestAgeMs !== null ? (
+                    <span className="px-1.5 py-0.5 rounded border border-slate-700 bg-slate-900/60 text-slate-300">
+                      ältester offener Vergleich: {formatCountdown(queue.oldestAgeMs)} alt
+                    </span>
+                  ) : (
+                    <span className="px-1.5 py-0.5 rounded border border-emerald-500/30 bg-emerald-500/10 text-emerald-300">
+                      Warteschlange leer — alle reifen Vergleiche aufgelöst
+                    </span>
+                  )}
+                  {queue.byHorizon.map((entry) => (
+                    <span
+                      key={entry.horizonMinutes}
+                      className="px-1.5 py-0.5 rounded border border-slate-700 bg-slate-900/60 text-slate-300"
+                    >
+                      {entry.horizonMinutes}m × {entry.queued}
+                    </span>
+                  ))}
+                </div>
+                {lastBatch.attemptedAtMs !== null ? (
+                  <p className="text-[9px] font-mono text-slate-500 mt-2">
+                    Letzter Batch:{' '}
+                    {new Date(lastBatch.attemptedAtMs).toLocaleTimeString('de-DE')} ·{' '}
+                    {lastBatch.bars} Bars · {lastBatch.resolved} aufgelöst
+                    {lastBatch.fromMs !== null && lastBatch.toMs !== null
+                      ? ` · Fenster ${formatCountdown(
+                          Math.max(0, lastBatch.toMs - lastBatch.fromMs)
+                        )}`
+                      : ''}
+                    {lastBatch.error ? ` · ${lastBatch.error}` : ''}
+                  </p>
+                ) : null}
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={flushQueue}
+              disabled={lastBatch.isRunning || queue.queued === 0}
+              className={`px-3 py-1.5 rounded-lg text-[11px] font-mono font-semibold border transition-colors flex items-center gap-1.5 ${
+                queue.queued === 0
+                  ? 'border-slate-800 bg-slate-900/40 text-slate-600 cursor-not-allowed'
+                  : 'border-amber-500/40 bg-amber-500/10 text-amber-200 hover:bg-amber-500/20'
+              }`}
+            >
+              <RefreshCw className={`w-3 h-3 ${lastBatch.isRunning ? 'animate-spin' : ''}`} />
+              {lastBatch.isRunning ? 'Batch läuft…' : 'Verpasste Daten per Batch nachladen'}
+            </button>
+          </div>
+        </div>
+
         {/* Graduation progress + governance */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <div className="bg-[#0f1420] border border-slate-800 rounded-xl p-4">
@@ -599,6 +723,9 @@ export default function MultiHorizonAccuracyWidget({
               {graduation.isGraduatedStrict ? ' · strikte Stufe erreicht' : ''}.
               {summary.best
                 ? ` Bester Horizont: ${summary.best.coveragePercent.toFixed(0)}% der Ausgänge mit Bewegung (N_eff ${summary.best.effectiveSamples.toFixed(1)}).`
+                : ''}
+              {feedStatus === 'MISSING'
+                ? ' Keine frischen Kursdaten — es werden keine neuen Snapshots erzeugt.'
                 : ''}
             </p>
           </div>

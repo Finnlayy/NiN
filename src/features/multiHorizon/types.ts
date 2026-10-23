@@ -34,6 +34,34 @@ export type SnapshotOrigin = 'LIVE' | 'REPLAY';
 export type M8EngineStatus = 'ACTIVE' | 'THROTTLED' | 'QUARANTINED' | 'RETIRED';
 
 /** Normalised features that feed the ONNX-style head (Paragraph 2, component 1). */
+/** Which real observation supplied P(t0) for a snapshot. */
+export type PriceSource = 'LIVE_TICK' | 'BAR_CLOSE';
+
+/** How a horizon outcome was obtained. */
+export type ResolutionVerification = 'LIVE_TICK' | 'BATCH_BACKFILL';
+
+/**
+ * A comparison that could not be evaluated while the feed was down.
+ *
+ * Jobs are created the moment a horizon matures without an observed price and
+ * stay queued until one batch request can backfill the missed window. They are
+ * never evaluated against an estimated or interpolated price.
+ */
+export type ComparisonJobStatus = 'queued' | 'resolved' | 'unresolvable';
+
+export interface ComparisonJob {
+  id: string;
+  snapshotId: string;
+  horizonMinutes: HorizonMinutes;
+  targetMs: number;
+  queuedAtExchangeMs: number;
+  attempts: number;
+  lastAttemptExchangeMs: number | null;
+  status: ComparisonJobStatus;
+  lastError: string | null;
+  checksum: string;
+}
+
 export interface FeatureSnapshot {
   price: number;
   rsi14: number;
@@ -94,6 +122,8 @@ export interface Paragraph2Snapshot {
   btcPriceAtT0: number;
   origin: SnapshotOrigin;
   m8EngineStatus: M8EngineStatus;
+  /** Provenance of `btcPriceAtT0` — real observation only, never a fallback. */
+  priceSource: PriceSource;
   components: ThreeComponentState;
   horizons: Record<HorizonMinutes, HorizonEvaluationSlot>;
   /** FNV-1a integrity fingerprint of the immutable payload. */
@@ -117,6 +147,11 @@ export interface HorizonResolution {
   magnitudeClosenessPercent: number;
   accuracyPercent: number;
   brierContribution: number;
+  /** Exchange timestamp of the price observation used for this outcome. */
+  observedAtExchangeMs: number;
+  /** When the outcome was recorded (live tick or batch backfill). */
+  verifiedAtExchangeMs: number;
+  verification: ResolutionVerification;
   /** Calibrated P(up) that was frozen at t0 — needed by the calibration optimiser. */
   predictedProbabilityUp: number;
   /** Directional paper PnL in percent (0 for neutral calls) — feeds the profit factor. */

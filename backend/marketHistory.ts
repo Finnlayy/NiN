@@ -16,6 +16,11 @@ const KRAKEN_OHLC_URL = 'https://api.kraken.com/0/public/OHLC';
 const CACHE_TTL_MS = 20_000;
 const REQUEST_TIMEOUT_MS = 4_000;
 
+/** Kraken returns at most 720 rows per OHLC call. */
+const KRAKEN_MAX_ROWS = 720;
+/** Hard page cap for one batch request (12 h of 1-minute bars). */
+const MAX_BATCH_PAGES = 12;
+
 export interface HistoryBar {
   tsMs: number;
   open: number;
@@ -33,6 +38,11 @@ export interface MarketHistoryPayload {
   bars: HistoryBar[];
   fetchedAtMs: number;
   latencyMs: number;
+  /** Present on batch responses. */
+  requestedFromMs?: number;
+  requestedToMs?: number;
+  /** Number of upstream pages needed for a batch window. */
+  pages?: number;
   error?: string;
 }
 
@@ -143,4 +153,100 @@ export async function getMarketHistory(
   } finally {
     clearTimeout(timeout);
   }
+}
+
+/**
+ * Batched range fetch for the offline comparison queue.
+ *
+ * The widget sends **one** request for the whole missed window; this function
+ * pages through Kraken internally (`since` cursor), de-duplicates and returns
+ * only the bars inside the requested range. Nothing is interpolated: if a
+ * minute is missing upstream it stays missing and the client marks the
+ * comparison unresolvable.
+ */
+export async function getMarketHistoryRange(
+  pair: string,
+  intervalMinutes: number,
+  fromMs: number,
+  toMs: number
+): Promise<MarketHistoryPayload> {
+  const safePair = PAIR_WHITELIST.has(pair) ? pair : 'XBTUSD';
+  const safeInterval = [1, 5, 15, 60].includes(intervalMinutes) ? intervalMinutes : 1;
+  const startedAt = Date.now();
+  const fromSeconds = Math.floor(fromMs / 1000);
+  const toSeconds = Math.ceil(toMs / 1000);
+
+  if (!Number.isFinite(fromSeconds) || !Number.isFinite(toSeconds) || toSeconds <= fromSeconds) {
+    return {
+      ...emptyPayload(safePair, safeInterval, 0, 'Ungültiges Backfill-Fenster.'),
+      requestedFromMs: fromMs,
+      requestedToMs: toMs,
+      pages: 0,
+    };
+  }
+
+  const collected = new Map<number, HistoryBar>();
+  let cursor = fromSeconds;
+  let pages = 0;
+  let lastError: string | undefined;
+
+  while (cursor < toSeconds && pages < MAX_BATCH_PAGES) {
+    pages += 1;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    try {
+      const url = `${KRAKEN_OHLC_URL}?pair=${encodeURIComponent(safePair)}&interval=${safeInterval}&since=${cursor}`;
+      const response = await fetch(url, {
+        signal: controller.signal,
+        headers: { Accept: 'application/json' },
+      });
+      if (!response.ok) {
+        lastError = `Kraken OHLC HTTP ${response.status}`;
+        break;
+      }
+      const body = (await response.json()) as { error?: unknown; result?: unknown };
+      if (Array.isArray(body.error) && body.error.length > 0) {
+        lastError = `Kraken OHLC error: ${String(body.error[0])}`;
+        break;
+      }
+      const pageBars = parseBars(body.result, safePair);
+      if (pageBars.length === 0) break;
+
+      let newest = cursor;
+      for (const bar of pageBars) {
+        if (bar.tsMs >= fromMs && bar.tsMs <= toMs) {
+          collected.set(bar.tsMs, bar);
+        }
+        newest = Math.max(newest, Math.floor(bar.tsMs / 1000));
+      }
+      if (newest <= cursor) break;
+      cursor = newest;
+      // A short page means the venue has no more history in this range.
+      if (pageBars.length < KRAKEN_MAX_ROWS) break;
+    } catch (error) {
+      lastError =
+        error instanceof Error && error.name === 'AbortError'
+          ? 'Kraken OHLC timeout'
+          : String(error);
+      break;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  const bars = [...collected.values()].sort((a, b) => a.tsMs - b.tsMs);
+  const payload: MarketHistoryPayload = {
+    source: bars.length > 0 ? 'KRAKEN' : 'UNAVAILABLE',
+    authoritative: bars.length > 0,
+    pair: safePair,
+    intervalMinutes: safeInterval,
+    bars,
+    fetchedAtMs: Date.now(),
+    latencyMs: Date.now() - startedAt,
+    requestedFromMs: fromMs,
+    requestedToMs: toMs,
+    pages,
+    ...(lastError && bars.length === 0 ? { error: lastError } : {}),
+  };
+  return payload;
 }

@@ -144,6 +144,7 @@ export function seedReplayLedger(
       t0ExchangeMs: t0,
       btcPriceAtT0: price,
       components,
+      priceSource: 'BAR_CLOSE',
       origin: 'REPLAY',
       m8EngineStatus: 'ACTIVE',
     });
