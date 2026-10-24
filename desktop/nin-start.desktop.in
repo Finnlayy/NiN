@@ -1,0 +1,16 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Start NiN
+Name[de]=NiN starten
+GenericName=Start the Neural Orchestrator stack
+GenericName[de]=Neural Orchestrator starten
+Comment=Install any missing dependencies, pull the local models, then start Ollama, the web stack, and the Architect terminal
+Comment[de]=Fehlende Abhängigkeiten installieren, lokale Modelle laden, dann Ollama, Web-Stack und Architect-Terminal starten
+Exec=@ROOT@/scripts/stack-start.sh
+Path=@ROOT@
+Icon=@ROOT@/desktop/icons/nin-start.png
+Terminal=true
+Categories=Development;
+StartupNotify=true
+Keywords=nin;orchestrator;start;

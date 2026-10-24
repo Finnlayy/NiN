@@ -48,7 +48,7 @@ export interface AIProviderInfo {
 }
 
 export class MultiProviderNeuralCore implements NeuralCoreAdapter {
-  private activeProviderId: AIProviderId = loadPersistedSelection() ?? 'gemini'; // Default: Gemini is active
+  private activeProviderId: AIProviderId = loadPersistedSelection() ?? 'lm_studio';
   private geminiAdapter: GeminiCoreAdapter;
   private lmStudioAdapter: LMStudioCoreAdapter;
   private oneProviderAdapter: OneProviderCoreAdapter;
