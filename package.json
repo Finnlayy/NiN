@@ -12,7 +12,8 @@
     "prestart": "npm run build",
     "start": "NODE_ENV=production node dist-server/server.cjs",
     "lint": "tsc --noEmit",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:horizon": "tsx --test tests/ts/*.test.ts"
   },
   "keywords": [
     "orchestrator",

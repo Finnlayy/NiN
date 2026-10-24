@@ -21,6 +21,8 @@ import { engineTelemetryHub } from './telemetryEngine';
 import { botRegistry } from './bots';
 import { handlePricesRequest } from './prices';
 import { fetchGitHubUser, rememberOidcHeader } from './connect';
+import { getExchangeClock } from './exchangeClock';
+import { getMarketHistory, getMarketHistoryRange } from './marketHistory';
 
 const krakenExecutor = new KrakenOrderExecutor();
 
@@ -158,6 +160,37 @@ export async function handleRequest(req: IncomingMessage, res: ServerResponse): 
         'Access-Control-Allow-Headers': 'Content-Type',
       });
       res.end();
+      return true;
+    }
+
+    if (method === 'GET' && (url === '/api/exchange/clock' || url === '/api/exchange/clock/')) {
+      const clock = await getExchangeClock();
+      sendJson(res, 200, clock);
+      return true;
+    }
+
+    if (method === 'GET' && (url === '/api/exchange/ohlc/batch' || url === '/api/exchange/ohlc/batch/')) {
+      // One client request for the whole missed window; paging happens here.
+      const query = parse(req.url ?? '/', true).query;
+      const pair = typeof query.pair === 'string' ? query.pair : 'XBTUSD';
+      const interval = Number(typeof query.interval === 'string' ? query.interval : 1) || 1;
+      const from = Number(typeof query.from === 'string' ? query.from : NaN);
+      const to = Number(typeof query.to === 'string' ? query.to : NaN);
+      if (!Number.isFinite(from) || !Number.isFinite(to)) {
+        sendJson(res, 400, { error: 'from/to (ms) required' });
+        return true;
+      }
+      const range = await getMarketHistoryRange(pair, interval, from, to);
+      sendJson(res, 200, range);
+      return true;
+    }
+
+    if (method === 'GET' && (url === '/api/exchange/ohlc' || url === '/api/exchange/ohlc/')) {
+      const query = parse(req.url ?? '/', true).query;
+      const pair = typeof query.pair === 'string' ? query.pair : 'XBTUSD';
+      const interval = Number(typeof query.interval === 'string' ? query.interval : 1) || 1;
+      const history = await getMarketHistory(pair, interval);
+      sendJson(res, 200, history);
       return true;
     }
 

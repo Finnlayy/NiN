@@ -5,10 +5,23 @@
  * venue price. The remaining symbols come from /api/prices (CoinGecko), which
  * also covers the Kraken-listed ones whenever the Kraken stream is down.
  *
- * Components keep their simulated fallback values when no feed has warmed up
- * yet, so the UI never breaks offline. If both routes fail, we degrade to the
- * legacy /api/kraken/status feed for BTC/SOL so those prices still work.
+ * Trading panels may keep their simulated placeholder values while the feed
+ * warms up (legacy `getLiveSpot`). Anything that *records* a price — the
+ * Paragraph 2 ledger, backtests, P&L — must use `observeLiveSpot()`, which
+ * returns only a genuinely observed quote plus its timestamp and venue, or
+ * `null`. There is no synthetic fallback on that path by design.
  */
+
+/** Venue that produced an observation. */
+export type LivePriceSource = 'KRAKEN_TICKERS' | 'KRAKEN_STATUS' | 'COINGECKO';
+
+/** A real observation: price, venue and the moment it was received. */
+export interface LiveSpotObservation {
+  symbol: LiveSymbol;
+  price: number;
+  updatedAtMs: number;
+  source: LivePriceSource;
+}
 
 export type LiveSymbol =
   | 'BTC' | 'ETH' | 'SOL' | 'SUI' | 'DOGE' | 'XRP' | 'BNB' | 'AVAX'
@@ -44,6 +57,13 @@ const KRAKEN_SYMBOLS: LiveSymbol[] = ['BTC', 'ETH', 'SOL', 'SUI', 'DOGE', 'XRP',
 const REFRESH_INTERVAL_MS = 10_000;
 
 const cache: Partial<Record<LiveSymbol, number>> = {};
+/** Provenance of every cached value (only real observations are recorded). */
+const meta: Partial<Record<LiveSymbol, { updatedAtMs: number; source: LivePriceSource }>> = {};
+
+function record(symbol: LiveSymbol, price: number, source: LivePriceSource): void {
+  cache[symbol] = price;
+  meta[symbol] = { updatedAtMs: Date.now(), source };
+}
 let poller: ReturnType<typeof setInterval> | null = null;
 let readyFired = false;
 const readyListeners: Array<() => void> = [];
@@ -65,7 +85,7 @@ async function refreshFromKraken(): Promise<void> {
     for (const sym of Object.keys(KRAKEN_TICKER_MAP) as LiveSymbol[]) {
       const last = data?.ticker?.[KRAKEN_TICKER_MAP[sym]!]?.last;
       if (typeof last === 'number' && Number.isFinite(last) && last > 0) {
-        cache[sym] = last;
+        record(sym, last, 'KRAKEN_STATUS');
       }
     }
     notifyReadyIfWarmed();
@@ -90,7 +110,7 @@ async function refreshFromKrakenTickers(): Promise<Set<LiveSymbol>> {
     for (const sym of KRAKEN_SYMBOLS) {
       const value = (prices as Record<string, unknown>)[sym];
       if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
-        cache[sym] = value;
+        record(sym, value, 'KRAKEN_TICKERS');
         updated.add(sym);
       }
     }
@@ -117,7 +137,7 @@ async function refresh(): Promise<void> {
       if (krakenUpdated.has(sym)) continue;
       const value = prices[sym];
       if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
-        cache[sym] = value;
+        record(sym, value, 'COINGECKO');
       }
     }
     notifyReadyIfWarmed();
@@ -135,12 +155,28 @@ function ensurePoller(): void {
 }
 
 /**
- * Returns the latest live spot price for a symbol, or the provided fallback
- * (then the built-in default) when the feed has not delivered a value yet.
+ * Legacy accessor for purely cosmetic panels: returns a cached quote, else the
+ * caller's placeholder, else a built-in demo constant.
+ *
+ * Nothing that persists a price may use this — see `observeLiveSpot()`.
  */
 export function getLiveSpot(symbol: LiveSymbol, fallback?: number): number {
   ensurePoller();
   return cache[symbol] ?? fallback ?? FALLBACKS[symbol];
+}
+
+/**
+ * Strict accessor: returns only a real, timestamped venue observation or
+ * `null`. Never invents, interpolates or substitutes a fallback price.
+ */
+export function observeLiveSpot(symbol: LiveSymbol): LiveSpotObservation | null {
+  ensurePoller();
+  const price = cache[symbol];
+  const info = meta[symbol];
+  if (typeof price !== 'number' || !Number.isFinite(price) || price <= 0 || !info) {
+    return null;
+  }
+  return { symbol, price, updatedAtMs: info.updatedAtMs, source: info.source };
 }
 
 /**

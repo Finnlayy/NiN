@@ -75,6 +75,32 @@ const middleware = createNeuralCoreMiddleware({
 `createNeuralCoreMiddleware` liefert einen Express-kompatiblen Handler.
 `processTask(context, config)` kann auch direkt aufgerufen werden.
 
+## Paragraph 2 — Multi-Horizont-Prognosegenauigkeit
+
+Die Übersicht der Broker-Leitwarte enthält das Widget
+`src/features/multiHorizon/MultiHorizonAccuracyWidget.tsx`: ein
+Punkt-in-Zeit-Ledger für die Drei-Komponenten-Berechnung (§2) mit sieben
+Vorwärtshorizonten (5/15/30/60/120/180/300 min), live BTC-Tracking,
+kalibriertem Brier-Score und konservativem Horizont-Ranking.
+Architektur, Invarianten und Fehler-Taxonomie:
+[`docs/PARAGRAPH2-MULTI-HORIZON.md`](docs/PARAGRAPH2-MULTI-HORIZON.md).
+
+```bash
+npm run test:horizon   # 24 Tests: Immutabilität, Zero-Future-Leak, Ranking, Replay,
+                       # Überlappungs-Korrektur und statistische Ehrlichkeit
+```
+
+Merkmale: 1-Minuten-Bar-Features (RSI/ATR/CISD/BB, EMA50/200, Hurst) aus
+Kraken-OHLC (`GET /api/exchange/ohlc`), überlappungskorrigierte
+Konfidenz (`N_eff`), Wilson-Untergrenze, chronologische Halbierungsprüfung und
+ein Divergenz-Schutz zwischen Live-Preis und Bar-Historie. Die Testsuite
+belegt, dass ein Random Walk **nie** als handelbar gemeldet wird, während ein
+echter Trend erkannt wird (20 Seeds: 0/20 falsch-positive, 20/20 richtig-positive).
+
+Die Börsenuhr kommt über `GET /api/exchange/clock` (Kraken Server-Time, serverseitig
+gecacht); ohne erreichbare Kraken-API degradiert das Widget sichtbar auf die lokale
+Uhr statt Zeitzonen zu erfinden.
+
 ## Komplexitätsklassifikation
 
 Der `classifyTask`-Schritt erkennt deterministisch Workflows aus den Domänen:
