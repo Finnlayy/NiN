@@ -45,6 +45,11 @@ TELEMETRY_PAYLOAD_FIELDS = {
     "regime_tick": ("cluster_id", "confidence", "is_forbidden_zone"),
 }
 
+#: Additive fields the validator does not require. ``gravity_tick`` may also
+#: carry ``mid_price``, ``w_vis``, ``w_blind``, ``w_poly``; ``regime_tick`` may
+#: carry ``quantile``. Older consumers ignore them; the learner needs
+#: ``mid_price`` to label a forward return.
+
 
 def _is_finite_number(value):
     """Endliche Zahl -- ``bool`` gilt ausdruecklich nicht (``isinstance(True, int)``)."""

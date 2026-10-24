@@ -29,8 +29,10 @@ Nur Standardbibliothek + numpy (wie die Engines selbst).
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 import time
+from collections import deque
 from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
@@ -85,8 +87,8 @@ class TelemetryFeed:
     Gewichtungen, die aus der Engine kommen (0.25/0.35/0.40).
     """
 
-    #: Gewichtungen aus ``ACGravityEngine.compute_gravity_field`` -- hier nur
-    #: zur Kenntlichmachung im Event, gerechnet wird in der Engine.
+    #: Blueprint-Prior (0.25/0.35/0.40). Gerechnet wird mit
+    #: ``self.gravity.weights``; ein Learner darf davon abweichen.
     WEIGHTS = (0.25, 0.35, 0.40)
 
     def __init__(
@@ -98,6 +100,8 @@ class TelemetryFeed:
         polymarket_prob: float = 0.5,
         bins: int = CVD_BINS,
         clock: Callable[[], float] = time.time,
+        learner: Any | None = None,
+        history_window: int | None = None,
     ) -> None:
         self.bus = bus
         self.sink = sink
@@ -106,11 +110,19 @@ class TelemetryFeed:
         self.bins = bins
         self.clock = clock
         self.micro = MicrostructureEngine()
-        self.gravity = ACGravityEngine()
+        self.learner = learner
+        engine_kwargs: dict[str, Any] = {}
+        if history_window is not None:
+            engine_kwargs["history_window"] = history_window
+        if learner is not None:
+            tuned = learner.params()
+            engine_kwargs["weights"] = (tuned["w_vis"], tuned["w_blind"], tuned["w_poly"])
+            engine_kwargs["quantile"] = tuned["quantile"]
+        self.gravity = ACGravityEngine(**engine_kwargs)
         self.sent = 0
         self.rejected = 0
         self.ticks = 0
-        self._history: list[float] = []
+        self._history: deque[float] = deque(maxlen=self.gravity.history_window)
 
     # -- Eingang ------------------------------------------------------------
     def on_tape(self, bids: Sequence[tuple[float, float]],
@@ -133,12 +145,13 @@ class TelemetryFeed:
             v_total = self.gravity.compute_gravity_field(
                 l2_depth, l3_iceberg, self.polymarket_prob
             )
+            history_ready = len(self._history) >= 2
             in_forbidden = self.gravity.is_in_forbidden_zone(price, self._history)
+            tuned = self.gravity.params()
         except Exception:  # noqa: BLE001 -- ein Tick darf den Feed nicht beenden
             self.rejected += 1
             return {kind: False for kind in ("microstructure_tick", "gravity_tick", "regime_tick")}
 
-        self._history.append(price)
         clock_s = self.clock()
         bins = self._resample(list(footprint), self.bins)
 
@@ -151,14 +164,20 @@ class TelemetryFeed:
             },
             clock_s=clock_s,
         )
+        gravity_payload = {
+            "l2_depth": round(float(l2_depth), 6),
+            "l3_iceberg": round(float(l3_iceberg), 6),
+            "polymarket_prob": round(float(self.polymarket_prob), 6),
+            "v_total": round(float(v_total), 6),
+            "w_vis": round(float(tuned["w_vis"]), 6),
+            "w_blind": round(float(tuned["w_blind"]), 6),
+            "w_poly": round(float(tuned["w_poly"]), 6),
+        }
+        if price is not None:
+            gravity_payload["mid_price"] = round(float(price), 6)
         sent["gravity_tick"] = self._send(
             "gravity_tick",
-            {
-                "l2_depth": round(float(l2_depth), 6),
-                "l3_iceberg": round(float(l3_iceberg), 6),
-                "polymarket_prob": round(float(self.polymarket_prob), 6),
-                "v_total": round(float(v_total), 6),
-            },
+            gravity_payload,
             clock_s=clock_s,
             assumptions=("polymarket_prob=static",),
         )
@@ -168,11 +187,36 @@ class TelemetryFeed:
                 "cluster_id": 0,
                 "confidence": round(abs(float(obi)), 6),
                 "is_forbidden_zone": 1.0 if in_forbidden else 0.0,
+                "quantile": round(float(tuned["quantile"]), 6),
             },
             clock_s=clock_s,
             assumptions=("cluster_id=uncalibrated",),
         )
+        # Learner sees the breach flag only once the window can support a
+        # quantile. Empty history used to answer "not forbidden", which is not
+        # a coverage error and would drag the adaptive quantile down.
+        if price is not None:
+            breach = bool(in_forbidden) if history_ready else None
+            self._adapt(l2_depth, l3_iceberg, float(price), breach)
+            self._history.append(float(price))
         return sent
+
+    def _adapt(self, l2_depth: float, l3_iceberg: float, price: float, in_forbidden: bool | None) -> None:
+        """One online step, then push the learned parameters back into the engine."""
+        if self.learner is None:
+            return
+        self.learner.observe(
+            {
+                "l2_depth": float(l2_depth),
+                "l3_iceberg": float(l3_iceberg),
+                "polymarket_prob": float(self.polymarket_prob),
+                "mid_price": float(price),
+                "is_forbidden_zone": in_forbidden,
+            }
+        )
+        tuned = self.learner.params()
+        self.gravity.set_weights((tuned["w_vis"], tuned["w_blind"], tuned["w_poly"]))
+        self.gravity.set_quantile(tuned["quantile"])
 
     # -- Ausgang ------------------------------------------------------------
     def _send(self, event_kind: str, payload: dict, clock_s: float, **extra) -> bool:
@@ -261,6 +305,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--price", type=float, default=100.0, help="Startpreis des Walks")
     parser.add_argument("--seed", type=int, default=20260908)
     parser.add_argument("--log", default=None, help="zusaetzlich NDJSON in diese Datei")
+    parser.add_argument("--learn", action="store_true", help="Gewichte und Quantil online aus den Ticks nachfuehren")
+    parser.add_argument("--params", default=None, help="gravity_params.json laden und (mit --learn) beim Beenden schreiben")
     args = parser.parse_args(argv)
 
     bus = EventBus(system_log_path=args.log or "Architect/runtime/system.log")
@@ -268,9 +314,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         bus.event_sinks["stderr"] = False
         bus.event_sinks["file"] = False
 
+    learner = _load_learner(args.learn, args.params)
     uds = load_uds_module()
     feed = TelemetryFeed(bus, uds.UDSBroadcastSink(args.socket), symbol=args.symbol,
-                         polymarket_prob=args.polymarket_prob)
+                         polymarket_prob=args.polymarket_prob, learner=learner if args.learn else None)
+    if learner is not None and not args.learn:
+        tuned = learner.params()
+        feed.gravity.set_weights((tuned["w_vis"], tuned["w_blind"], tuned["w_poly"]))
+        feed.gravity.set_quantile(tuned["quantile"])
     walk = _TapeWalk(args.price, args.seed)
     print("telemetry feed -> %s (symbol=%s, tick=%.2fs)" % (args.socket, args.symbol, args.tick_s),
           file=sys.stderr, flush=True)
@@ -284,9 +335,27 @@ def main(argv: Sequence[str] | None = None) -> int:
     finally:
         if feed.sink is not None:
             feed.sink.close()
+        if args.learn and args.params and feed.learner is not None:
+            out = Path(args.params)
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(json.dumps(feed.learner.to_json(), indent=2) + "\n", encoding="utf-8")
     print("telemetry feed beendet: %d Events, %d verworfen" % (feed.sent, feed.rejected),
           file=sys.stderr, flush=True)
     return 0
+
+
+def _load_learner(learn: bool, params_path: str | None):
+    """Learner aus ``--params`` rekonstruieren, oder frisch starten wenn ``--learn``."""
+    if not learn and not params_path:
+        return None
+    from limbs.ml.gravity_learner import GravityFieldLearner
+
+    if params_path and Path(params_path).is_file():
+        payload = json.loads(Path(params_path).read_text(encoding="utf-8"))
+        return GravityFieldLearner.from_json(payload)
+    if learn:
+        return GravityFieldLearner()
+    return None
 
 
 class _TapeWalk:
