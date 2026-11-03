@@ -15,7 +15,7 @@ interface CreateBotModalProps {
 
 const PRESET_PAIRS = [
   { pair: 'HYPE/USDT.P', venue: 'Pionex Futures', defaultPrice: getLiveSpot('HYPE', 93), defaultRange: [39, 46], defaultLev: 75 },
-  { pair: 'BTC/USD.P', venue: 'Kraken Pro Perpetual', defaultPrice: getLiveSpot('BTC', 84500), defaultRange: [61000, 69000], defaultLev: 10 },
+  { pair: 'BTC/USD.P', venue: 'Kraken Pro Perpetual', defaultPrice: getLiveSpot('BTC'), defaultRange: [Math.round(getLiveSpot('BTC') * 0.94), Math.round(getLiveSpot('BTC') * 1.06)], defaultLev: 10 },
   { pair: 'SOL/USD.P', venue: 'Kraken Pro Futures', defaultPrice: getLiveSpot('SOL', 121), defaultRange: [128, 158], defaultLev: 20 },
   { pair: 'ETH/USD.P', venue: 'Kraken Pro Perpetual', defaultPrice: getLiveSpot('ETH', 2705), defaultRange: [3200, 3750], defaultLev: 15 },
   { pair: 'SUI/USDT.P', venue: 'Pionex Futures', defaultPrice: getLiveSpot('SUI', 1.18), defaultRange: [1.70, 2.20], defaultLev: 50 },

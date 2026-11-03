@@ -63,9 +63,9 @@ export default function SystemAxiomMonitor({ onLogEvent, className = '' }: Syste
 
   // Interactive Candidate Order State
   const [symbol, setSymbol] = useState<'BTC/USD' | 'SOL/USD' | 'SUI/USD' | 'ETH/USD'>('BTC/USD');
-  const [targetPrice, setTargetPrice] = useState<number>(() => getLiveSpot('BTC', 64280.50));
+  const [targetPrice, setTargetPrice] = useState<number>(() => getLiveSpot('BTC'));
   const [direction, setDirection] = useState<'LONG' | 'SHORT'>('LONG');
-  const [exchangeStopLoss, setExchangeStopLoss] = useState<number>(63850);
+  const [exchangeStopLoss, setExchangeStopLoss] = useState<number>(() => Number((getLiveSpot('BTC') - 420 * 1.2).toFixed(2)));
   const [timeDeltaMinutes, setTimeDeltaMinutes] = useState<number>(60);
   const [activeTab, setActiveTab] = useState<'OVERVIEW' | 'VIA_NEGATIVA' | 'AXIOM_DEEP_DIVE' | 'STRESS_TEST'>('OVERVIEW');
   const [audioAlertsEnabled, setAudioAlertsEnabled] = useState<boolean>(false);
@@ -89,32 +89,37 @@ export default function SystemAxiomMonitor({ onLogEvent, className = '' }: Syste
   }), []);
 
   // Live alerts log
-  const [alerts, setAlerts] = useState<AxiomAlertItem[]>(() => [
-    {
-      id: 'alert-init-1',
-      timestamp: new Date().toLocaleTimeString('de-DE'),
-      axiomId: 1,
-      severity: 'NOMINAL',
-      title: 'Axiom 1 // Via Negativa Safe Zone aktiv',
-      message: 'Initialer Zielpreis liegt optimal zentriert im energetischen Toleranzband (Puffer > 35%).',
-    },
-    {
-      id: 'alert-init-2',
-      timestamp: new Date().toLocaleTimeString('de-DE'),
-      axiomId: 5,
-      severity: 'NOMINAL',
-      title: 'Axiom 5 // Kraken Matching Engine synchron',
-      message: 'Börsenseitiger OCO Stop-Loss aktiv persistiert ($63,850.00). Latenz < 18 ms.',
-    },
-    {
-      id: 'alert-init-3',
-      timestamp: new Date().toLocaleTimeString('de-DE'),
-      axiomId: 2,
-      severity: 'NOMINAL',
-      title: 'Axiom 2 // Gravitationsvektor -∇V_total ausgerichtet',
-      message: 'LONG-Richtung folgt dem globalen Potentialgradienten (+84.5 N in Richtung P* $64,800).',
-    }
-  ]);
+  const [alerts, setAlerts] = useState<AxiomAlertItem[]>(() => {
+    const gravity = getLiveOmegaTelemetry().gravityField;
+    const stop = Number((getLiveSpot('BTC') - 420 * 1.2).toFixed(2));
+    const pStar = gravity.potentialMinimumPrice.toLocaleString('en-US', { maximumFractionDigits: 0 });
+    return [
+      {
+        id: 'alert-init-1',
+        timestamp: new Date().toLocaleTimeString('de-DE'),
+        axiomId: 1,
+        severity: 'NOMINAL',
+        title: 'Axiom 1 // Via Negativa Safe Zone aktiv',
+        message: 'Initialer Zielpreis liegt optimal zentriert im energetischen Toleranzband (Puffer > 35%).',
+      },
+      {
+        id: 'alert-init-2',
+        timestamp: new Date().toLocaleTimeString('de-DE'),
+        axiomId: 5,
+        severity: 'NOMINAL',
+        title: 'Axiom 5 // Kraken Matching Engine synchron',
+        message: `Börsenseitiger OCO Stop-Loss aktiv persistiert ($${stop.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}). Latenz < 18 ms.`,
+      },
+      {
+        id: 'alert-init-3',
+        timestamp: new Date().toLocaleTimeString('de-DE'),
+        axiomId: 2,
+        severity: 'NOMINAL',
+        title: 'Axiom 2 // Gravitationsvektor -∇V_total ausgerichtet',
+        message: `LONG-Richtung folgt dem globalen Potentialgradienten (+${gravity.gravityForce.toFixed(1)} N in Richtung P* $${pStar}).`,
+      },
+    ];
+  });
 
   // Asset price presets
   const assetSpecs: Record<string, { basePrice: number; atr: number }> = useMemo(() => ({

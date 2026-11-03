@@ -43,7 +43,7 @@ interface PotentialPoint {
 }
 
 export default function GravityFieldVisualizer({
-  spotPrice = getLiveSpot('BTC', 64280),
+  spotPrice = getLiveSpot('BTC'),
   gravityField,
   viaNegativa,
   onParametersChange,
