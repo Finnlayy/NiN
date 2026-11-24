@@ -26,6 +26,7 @@
   "dependencies": {
     "@google/genai": "^2.21.0",
     "@upstash/redis": "^1.39.0",
+    "@vercel/analytics": "^2.0.1",
     "@vercel/connect": "^2.3.2",
     "@xyflow/react": "^12.11.6",
     "ai": "^7.0.112",
